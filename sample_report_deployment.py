@@ -117,10 +117,10 @@ AS $function$
   from "RDS".reporting$eod_trans_sum_table
   where end_date BETWEEN starttime AND endtime
   group by operation, currency, additional_info
-$function$
+$function$;
 """
 
-STATIC_GRANTS_FOR_NEW_OBJECTS = """ALTER TABLE "reporting$eod_trans_sum_table" OWNER TO "RDS";
+STATIC_GRANTS_FOR_NEW_OBJECTS_1 = """ALTER TABLE "reporting$eod_trans_sum_table" OWNER TO "RDS";
 ALTER TABLE "reporting$eod_trans_sum_table_p0" OWNER TO "RDS";
 ALTER TABLE "reporting$eod_trans_sum_table_p1" OWNER TO "RDS";
 ALTER TABLE "reporting$eod_trans_sum_table_p2" OWNER TO "RDS";
@@ -157,8 +157,9 @@ ALTER TABLE "reporting$eod_trans_sum_table_p32" OWNER TO "RDS";
 ALTER TABLE "reporting$eod_trans_sum_table_p33" OWNER TO "RDS";
 ALTER TABLE "reporting$eod_trans_sum_table_p34" OWNER TO "RDS";
 ALTER TABLE "reporting$eod_trans_sum_table_p35" OWNER TO "RDS";
+"""
 
-ALTER FUNCTION "RDS"."end_of_day_transaction_summary_insert"(date,date) OWNER TO postgres;
+STATIC_GRANTS_FOR_NEW_OBJECTS_2 = """ALTER FUNCTION "RDS"."end_of_day_transaction_summary_insert"(date,date) OWNER TO postgres;
 ALTER FUNCTION "Stanbic"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;
 ALTER FUNCTION "global"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;
 GRANT ALL ON FUNCTION "Stanbic"."example$end_of_day_transaction_summary"(date,date) TO "RDS";
@@ -414,6 +415,7 @@ for i in qb1.functionProcedureList:
   fhb1.currentFile.write( i + '\n' )
 
 fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_3 )
+fhb1.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_1 )
 
 fhb2 = FileHandlerBox()
 fhb2.touchOrOpenMyFile()
@@ -421,7 +423,11 @@ fhb2.touchOrOpenMyFile()
 for i in qb1.schemasQueries:
     fhb2.currentFile.write( i + '\n' )
 
-fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS )
+fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_2 )
 
 fhb1.closeMyFile()
 fhb2.closeMyFile()
+
+
+os.rename( fhb1.currentQueryFileName, 'query.RDS.sql' )
+os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
