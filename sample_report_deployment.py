@@ -4,15 +4,16 @@
 # |S|A|M|P|L|E| |R|E|P|O|R|T|S| |D|E|P|L|O|Y|M|E|N|T|
 # +-+-+-+-+-+-+ +-+-+-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
 
-import os
-import sys
 from termcolor import colored
 from datetime import datetime, timedelta
+from progress.bar import Bar
+from random import *
 import pg8000
+import sys
+import os
 import calendar
 import logging
 import string
-from random import *
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -20,7 +21,9 @@ from random import *
 
 STATIC_BANNER = "    S A M P LE   R E P O R T   D E P L O Y M E N T   T O O L"
 STATIC_LINE = "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+"
+STATIC_DOTTED_LINE = "................................................................."
 EMPTY_SPACE = ""
+STATIC_BANNER_SEARCHING_DATA = "Searching stored data in report$reservation:"
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -96,6 +99,7 @@ STATIC_FUNCTION_INSERT = """CREATE FUNCTION "end_of_day_transaction_summary_inse
       order by operationtype, currencycode, toserviceprovider
     );
   $_$;
+
 """
 
 STATIC_NEW_EOD_FUNCTION_GENERAL = """ RETURNS TABLE(start_date date, end_date date, operation text, total_count numeric, currency text, total_amount numeric, total_fees numeric, total_discounts numeric, total_promotions numeric, total_coupons numeric, additional_info text)
@@ -175,6 +179,7 @@ class OsAgent:
  
     commando = 'clear'
     token = 'ABc123456'
+    myProgressBar = None
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -197,6 +202,9 @@ class OsAgent:
     @staticmethod
     def elegantExit():
         sys.exit()
+
+    def progressBarPrint(self, message, listLen):
+        self.myProgressBar = Bar(message, max=listLen)
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -251,6 +259,7 @@ class PartitionBox:
     fin = ""
     table = ""
     FORMAT_STRING = "%Y-%m-%d"
+    finalDatesDataPopulation = []
 
     def monthRange(self,year,month):
         self.date_rango = calendar.monthrange(year,month)
@@ -271,6 +280,16 @@ class PartitionBox:
     def addTuple(self):
         self.partitionTuple = ( self.table, self.inicio, self.fin ) 
 
+    def generaDateQueries(self, myDateList):
+        for i in myDateList:
+            tempStartUp, tempEndUp = i
+            tempDateValue = datetime.strptime( tempStartUp, self.FORMAT_STRING )
+            first_weekday, month_days = calendar.monthrange(tempDateValue.year, tempDateValue.month)
+            for mday in xrange(1, month_days + 1):
+                myFinalDateObject = datetime(year=tempDateValue.year, month=tempDateValue.month, day=mday )
+                myFinalDateString = myFinalDateObject.strftime('%Y-%m-%d')
+                self.finalDatesDataPopulation.append( myFinalDateString )
+
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 class QueryBuilder:
@@ -281,6 +300,9 @@ class QueryBuilder:
     FORMAT_STRING = "%Y-%m-%d"
     schemasList = [] 
     schemasQueries = []
+    monthWithDataQueries = []
+    dataFoundDates = []
+    finalDataInsertQueries = []
 
     def addTuple(self,myTuple):
         self.finalQueryList.append(myTuple) 
@@ -325,6 +347,18 @@ class QueryBuilder:
         for i in self.schemasList:
             self.schemasQueries.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date, date) RENAME TO example$end_of_day_transaction_summary_orig;' % ( i ) + '\n' )
             self.schemasQueries.append( 'CREATE OR REPLACE FUNCTION "%s"."example$end_of_day_transaction_summary"(starttime date, endtime date)' % ( i ) + '\n' + STATIC_NEW_EOD_FUNCTION_GENERAL )
+
+    def buildAggregationTableQueries(self):
+        for i in qb1.finalQueryList:
+            table, startDate, endDate = i
+            tempString = 'SELECT count(*) FROM report$reservation WHERE finalizedtime BETWEEN \'%s\' AND \'%s\';' % ( startDate, endDate )
+            myTempTuple = ( startDate, endDate, tempString )
+            self.monthWithDataQueries.append( myTempTuple )
+
+    def generaDataQueries(self, myDateList):
+        for i in myDateList:
+            myTempQuery = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( i, i )
+            self.finalDataInsertQueries.append( myTempQuery )
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -372,17 +406,28 @@ print( EMPTY_SPACE )
 
 os1 = OsAgent('clear','ABc12345')
 os1.readKeyboard("Enter RDS password: ")
+print colored( STATIC_DOTTED_LINE , 'yellow')
+print( EMPTY_SPACE )
 
 # - Open connection
 
 db1 = DBbox('RDS',os1.token,'RDS',5432)
 db1.openConnection(botLogger)
+print colored( 'Open DB connection.', 'white')
+print colored( STATIC_DOTTED_LINE , 'yellow')
+print( EMPTY_SPACE )
 
 if db1.conexion is None:
     botLogger.error("Exiting because connection None, Elegant Exit Called")
+    print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
     os1.elegantExit()
 else:
 # - Getting last partition
+    print colored( 'Getting current partition.', 'white')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
     db1.queryRDS(CURRENT_PARTITION_QUERY)
     pb1 = PartitionBox()
     pb1.partition = db1.resultQuery
@@ -390,16 +435,49 @@ else:
     pb1.addTuple()
 
     # - Generate tuples in the list
+    print colored( 'Generating tuples for queries.', 'white')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
     qb1 = QueryBuilder()
     qb1.addTuple( pb1.partitionTuple )
 
     # - Generate child tables detail
+    print colored( 'Generating Child Tables queries.', 'white')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
     qb1.generateChildTableQuery()
 
     # - Get schemas to generate backups & procedures
+    print colored( 'Building other schema quieres.', 'white')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
     db1.queryRDS(CURRENT_SCHEMAS_QUERY)
     qb1.schemasList = db1.resultQueryClean
     qb1.buildShemaQueries()
+
+    # - Generate queries for aggregated tables.
+    #qb1.finalQueryList
+    qb1.buildAggregationTableQueries()
+    print colored( STATIC_BANNER_SEARCHING_DATA , 'white')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
+    os1.progressBarPrint( 'Searching Data Per Month:', len(qb1.monthWithDataQueries) )
+    for i in qb1.monthWithDataQueries:
+        tempStartDate , tempEndDate, tempQuery = i
+        db1.queryRDS( tempQuery )
+        if db1.resultQuery[0][0] != 0:
+            tempTupleGenerated = ( tempStartDate, tempEndDate )
+            qb1.dataFoundDates.append( tempTupleGenerated )
+        os1.myProgressBar.next()
+
+    print( EMPTY_SPACE )
+    os1.myProgressBar.finish()
+    pb1.generaDateQueries(qb1.dataFoundDates)
+    qb1.generaDataQueries(pb1.finalDatesDataPopulation)
+
+print colored( 'Dumping files with the queries.', 'white')
+print colored( STATIC_DOTTED_LINE , 'yellow')
+print( EMPTY_SPACE )
 
 fhb1 = FileHandlerBox()
 fhb1.touchOrOpenMyFile()
@@ -415,6 +493,7 @@ for i in qb1.functionProcedureList:
   fhb1.currentFile.write( i + '\n' )
 
 fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_3 )
+fhb1.currentFile.write( STATIC_FUNCTION_INSERT )
 fhb1.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_1 )
 
 fhb2 = FileHandlerBox()
@@ -425,9 +504,16 @@ for i in qb1.schemasQueries:
 
 fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_2 )
 
+fhb3 = FileHandlerBox()
+fhb3.touchOrOpenMyFile()
+
+for i in qb1.finalDataInsertQueries:
+    fhb3.currentFile.write( i + '\n' )
+
 fhb1.closeMyFile()
 fhb2.closeMyFile()
-
+fhb3.closeMyFile()
 
 os.rename( fhb1.currentQueryFileName, 'query.RDS.sql' )
 os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
+os.rename( fhb3.currentQueryFileName, 'query.inserts.sql' )
