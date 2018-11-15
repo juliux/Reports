@@ -29,7 +29,7 @@ STATIC_NON_INTERACTIVE_BANNER = "Entering non interactive mode."
 STATIC_ERROR_IN_SYNTAX = "Error in syntax, dropping session & calling ellegant exit."
 STATIC_USAGE_BANNER = """
 Usage:
-./sample_report_deployment.py nonInteractive Password report
+./sample_report_deployment.py nonInteractive RDS_User_Password Function
 
 Or Version detail:
 ./sample_report_deployment.py version
@@ -37,16 +37,19 @@ Or Version detail:
 Example:
 ./sample_report_deployment.py nonInteractive ABc123456 generateEODReport
 
-Reports are: generateEODReport | agentHierarchyReport | serviceProviderTransReport 
+Functions are: generateEODReport | agentHierarchyReport | serviceProviderTransReport | generateEODReportRollback | agentHierarchyReportRollback | serviceProviderTransReportRollback
 """
 STATIC_MENU_BANNER = """Select your report:
 
 [1] End of day summary report.
 [2] Agent hierarchy transaction summary report.
 [3] Service provider transaction summary report.
+[4] End of day summary report - ROLLBACK.
+[5] Agent hierarchy transaction summary report - ROLLBACK.
+[6] Service provider transaction summary report - ROLLBACK.
 ................................................................."""
 
-STATIC_ALERT = "    H A V E   T O   B E  1, 2  OR  3 !"
+STATIC_ALERT = "    H A V E   T O   B E  1, 2, 3, 4, 5  OR  6 !"
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -194,6 +197,11 @@ GRANT ALL ON FUNCTION "global"."example$end_of_day_transaction_summary"(date,dat
 GRANT ALL ON FUNCTION "RDS"."end_of_day_transaction_summary_insert"(date,date) TO "RDS";
 """
 
+STATIC_EOD_ROLLBACK_OBJECT_1 = """DROP TABLE reporting$eod_trans_sum_table CASCADE;
+DROP FUNCTION reporting$eod_trans_sum_insert_function();
+DROP FUNCTION end_of_day_transaction_summary_insert(date,date);
+
+"""
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
 # |C|L|A|S|S| |D|E|F|I|N|I|T|I|O|N|
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
@@ -208,7 +216,7 @@ class OsAgent:
     whichReport = ""
     myselfScript = ""
     rawKeyboard = ""
-    validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport']
+    validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport','generateEODReportRollback','agentHierarchyReportRollback','serviceProviderTransReportRollback']
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -339,6 +347,7 @@ class QueryBuilder:
     FORMAT_STRING = "%Y-%m-%d"
     schemasList = [] 
     schemasQueries = []
+    schemasQueriesRollback = []
     monthWithDataQueries = []
     dataFoundDates = []
     finalDataInsertQueries = []
@@ -386,6 +395,14 @@ class QueryBuilder:
         for i in self.schemasList:
             self.schemasQueries.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date, date) RENAME TO example$end_of_day_transaction_summary_orig;' % ( i ) + '\n' )
             self.schemasQueries.append( 'CREATE OR REPLACE FUNCTION "%s"."example$end_of_day_transaction_summary"(starttime date, endtime date)' % ( i ) + '\n' + STATIC_NEW_EOD_FUNCTION_GENERAL )
+
+    def buildShemaQueriesRollback(self):
+        # - Build queries for Rollbacks using schemas
+        for i in self.schemasList:
+            #self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$end_of_day_transaction_summary(date,date);' % ( i ) + '\n' )
+            self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$end_of_day_transaction_summary(date,date);' % ( i ) )
+            #self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary_orig"(date, date) RENAME TO example$end_of_day_transaction_summary;' % ( i ) + '\n' )
+            self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary_orig"(date, date) RENAME TO example$end_of_day_transaction_summary;' % ( i ) )
 
     def buildAggregationTableQueries(self):
         for i in qb1.finalQueryList:
@@ -536,6 +553,51 @@ class FinalReport:
             os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
             os.rename( fhb3.currentQueryFileName, 'query.inserts.sql' )
 
+    def generateEODReportRollback(self,db1,fhb4,fhb5):
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+        print( EMPTY_SPACE )
+        print colored( 'Open DB connection.', 'white')
+        print colored( STATIC_DOTTED_LINE , 'yellow')
+        print( EMPTY_SPACE )
+
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            os1.elegantExit()
+        else:
+            # - End of day report rollback   
+            # - Get schemas to generate rollback queries
+            print colored( 'Building rollback schema queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            db1.queryRDS(CURRENT_SCHEMAS_QUERY)
+            qb1.schemasList = db1.resultQueryClean
+            qb1.buildShemaQueriesRollback()
+
+            print colored( 'Dumping files with the queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+
+            fhb4 = FileHandlerBox()
+            fhb4.touchOrOpenMyFile()
+            fhb5 = FileHandlerBox()
+            fhb5.touchOrOpenMyFile()
+
+            fhb4.currentFile.write( STATIC_EOD_ROLLBACK_OBJECT_1 )
+
+            for i in qb1.schemasQueriesRollback:
+                fhb5.currentFile.write( i + '\n' )
+
+            fhb4.closeMyFile()
+            fhb5.closeMyFile()
+
+            os.rename( fhb4.currentQueryFileName, 'query.RDS.Rollback.sql' )
+            os.rename( fhb5.currentQueryFileName, 'query.postgres.Rollback.sql' )
+
     def agentHierarchyReport(self):
         pass
 
@@ -602,6 +664,8 @@ if len(os1.parametersList) != 1:
             fhb1 = FileHandlerBox()
             fhb2 = FileHandlerBox()
             fhb3 = FileHandlerBox()
+            fhb4 = FileHandlerBox()
+            fhb5 = FileHandlerBox()
             myReportBox = FinalReport()
                 
             if os1.whichReport == 'generateEODReport':
@@ -613,7 +677,16 @@ if len(os1.parametersList) != 1:
             elif os1.whichReport == 'serviceProviderTransReport':
                 # - Service Provider report
                 print( 'Service Provider report' )
-                # - Will be building object
+            elif os1.whichReport == 'generateEODReportRollback':
+                # - Service Provider report
+                #print( 'EOD report Rollback' )
+                myReportBox.generateEODReportRollback(db1,fhb4,fhb5)
+            elif os1.whichReport == 'agentHierarchyReportRollback':
+                # - Service Provider report
+                print( 'Agent Hierarchy report Rollback' )
+            elif os1.whichReport == 'serviceProviderTransReportRollback':
+                # - Service Provider report
+                print( 'Service Provider report Rollback' )
         else:
             # - Entering error in syntax
             FinalReport.dropTrashUsage()
@@ -640,6 +713,8 @@ else:
     fhb1 = FileHandlerBox()
     fhb2 = FileHandlerBox()
     fhb3 = FileHandlerBox()
+    fhb4 = FileHandlerBox()
+    fhb5 = FileHandlerBox()
     myReportBox = FinalReport()
 
     tempFlag = True
@@ -650,8 +725,8 @@ else:
         print colored( STATIC_LINE, 'yellow')
         print( EMPTY_SPACE )
         os1.mainMenu()
-        os1.readKeyboard('Type 1,2 or 3: ')
-        if os1.rawKeyboard == '1' or os1.rawKeyboard == '2' or os1.rawKeyboard == '3':
+        os1.readKeyboard('Type 1 to 6 options: ')
+        if os1.rawKeyboard == '1' or os1.rawKeyboard == '2' or os1.rawKeyboard == '3' or os1.rawKeyboard == '4' or os1.rawKeyboard == '5' or os1.rawKeyboard == '6':
             tempFlag = False
         else:
             OsAgent.clearScreen()
@@ -661,12 +736,22 @@ else:
             os1.waitPlease(1)
 
     if os1.rawKeyboard == '1':
+        # - EOD Report
         myReportBox.generateEODReport(db1,pb1,qb1,fhb1,fhb2,fhb3)
     elif os1.rawKeyboard == '2':
         # - Agent Hierarchy report
         print( 'Agent Hierarchy report' )
-        # - agentHierarchyReport
     elif os1.rawKeyboard == '3':
         # - Service Provider report
         print( 'Service Provider report' )
-        # - serviceProviderTransReport
+    elif os1.rawKeyboard == '4':
+        # - EOD Report Rollback
+        #print( 'EOD Report Rollback' )
+        myReportBox.generateEODReportRollback(db1,fhb4,fhb5)
+    elif os1.rawKeyboard == '5':
+        # - agentHierarchyReport Rollback
+        print( 'Agent Hierarchy report Rollback' )
+    elif os1.rawKeyboard == '6':
+        # - Service Provider report Rollback
+        print( 'Service Provider report Rollback' )
+
