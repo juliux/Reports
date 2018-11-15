@@ -14,16 +14,36 @@ import os
 import calendar
 import logging
 import string
+import time
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 # - Banner generation
 
-STATIC_BANNER = "    S A M P LE   R E P O R T   D E P L O Y M E N T   T O O L"
+STATIC_BANNER = "    S A M P L E   R E P O R T   D E P L O Y M E N T   T O O L"
 STATIC_LINE = "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+"
 STATIC_DOTTED_LINE = "................................................................."
 EMPTY_SPACE = ""
 STATIC_BANNER_SEARCHING_DATA = "Searching stored data in report$reservation:"
+STATIC_NON_INTERACTIVE_BANNER = "Entering non interactive mode."
+STATIC_ERROR_IN_SYNTAX = "Error in syntax, dropping session & calling ellegant exit."
+STATIC_USAGE_BANNER = """
+Usage:
+./sample_report_deployment.py nonInteractive Password report
+
+Example:
+./sample_report_deployment.py nonInteractive ABc123456 generateEODReport
+
+Reports are: generateEODReport | agentHierarchyReport | serviceProviderTransReport 
+"""
+STATIC_MENU_BANNER = """Select your report:
+
+[1] End of day summary report.
+[2] Agent hierarchy transaction summary report.
+[3] Service provider transaction summary report.
+................................................................."""
+
+STATIC_ALERT = "    H A V E   T O   B E  1, 2  OR  3 !"
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -180,6 +200,12 @@ class OsAgent:
     commando = 'clear'
     token = 'ABc123456'
     myProgressBar = None
+    parametersList = []
+    state = ""
+    whichReport = ""
+    myselfScript = ""
+    rawKeyboard = ""
+    validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport']
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -189,7 +215,7 @@ class OsAgent:
         os.system(self.commando)
 
     def readKeyboard(self, question_string):
-        self.token = raw_input( question_string )
+        self.rawKeyboard = raw_input( question_string )
    
     #def exportVar(self,variable):
      #   os.environ['"' + variable + '"'] = self.token
@@ -203,8 +229,18 @@ class OsAgent:
     def elegantExit():
         sys.exit()
 
+    @staticmethod
+    def waitPlease(mySeconds):
+        time.sleep(mySeconds)
+
     def progressBarPrint(self, message, listLen):
         self.myProgressBar = Bar(message, max=listLen)
+
+    def controlInteractive(self):
+        self.myselfScript, self.state, self.token, self.whichReport = self.parametersList
+
+    def mainMenu(self):
+        print colored(STATIC_MENU_BANNER, 'yellow')
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -402,29 +438,299 @@ print colored( STATIC_BANNER, 'white')
 print colored( STATIC_LINE, 'yellow') 
 print( EMPTY_SPACE )
 
-# - Read RDS password
-
 os1 = OsAgent('clear','ABc12345')
-os1.readKeyboard("Enter RDS password: ")
-print colored( STATIC_DOTTED_LINE , 'yellow')
-print( EMPTY_SPACE )
+os1.parametersList = sys.argv
 
-# - Open connection
+if len(os1.parametersList) != 1:
+    print colored( STATIC_NON_INTERACTIVE_BANNER, 'white')
+    print colored( STATIC_DOTTED_LINE, 'yellow')
+    print( EMPTY_SPACE )
+    if len( os1.parametersList ) == 4:
+        if os1.parametersList[1] == 'nonInteractive' and os1.parametersList[3] in os1.validReports:
+            # - Entering non interactive
+            os1.controlInteractive()
+            # - will go interactive
+            # - Read RDS password
+            # - Open connection
+            db1 = DBbox('RDS',os1.token,'RDS',5432)
+            db1.openConnection(botLogger)
+            print colored( 'Open DB connection.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
 
-db1 = DBbox('RDS',os1.token,'RDS',5432)
-db1.openConnection(botLogger)
-print colored( 'Open DB connection.', 'white')
-print colored( STATIC_DOTTED_LINE , 'yellow')
-print( EMPTY_SPACE )
+            if db1.conexion is None:
+                botLogger.error("Exiting because connection None, Elegant Exit Called")
+                print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+                print colored( STATIC_DOTTED_LINE , 'yellow')
+                print( EMPTY_SPACE )
+                os1.elegantExit()
+            else:
+                if os1.whichReport == 'generateEODReport':
+                    # - End of day report    
+                    # - Getting last partition
+                    print colored( 'Getting current partition.', 'white')
+                    print colored( STATIC_DOTTED_LINE , 'yellow')
+                    print( EMPTY_SPACE )
+                    db1.queryRDS(CURRENT_PARTITION_QUERY)
+                    pb1 = PartitionBox()
+                    pb1.partition = db1.resultQuery
+                    pb1.stackPartition(TABLE_NAME_EOD_SUM_REPORT)
+                    pb1.addTuple()
 
-if db1.conexion is None:
-    botLogger.error("Exiting because connection None, Elegant Exit Called")
-    print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+                    # - Generate tuples in the list
+                    print colored( 'Generating tuples for queries.', 'white')
+                    print colored( STATIC_DOTTED_LINE , 'yellow')
+                    print( EMPTY_SPACE )
+                    qb1 = QueryBuilder()
+                    qb1.addTuple( pb1.partitionTuple )
+
+                    # - Generate child tables detail
+                    print colored( 'Generating Child Tables queries.', 'white')
+                    print colored( STATIC_DOTTED_LINE , 'yellow')
+                    print( EMPTY_SPACE )
+                    qb1.generateChildTableQuery()
+
+                    # - Get schemas to generate backups & procedures
+                    print colored( 'Building other schema quieres.', 'white')
+                    print colored( STATIC_DOTTED_LINE , 'yellow')
+                    print( EMPTY_SPACE )
+                    db1.queryRDS(CURRENT_SCHEMAS_QUERY)
+                    qb1.schemasList = db1.resultQueryClean
+                    qb1.buildShemaQueries()
+
+                    # - Generate queries for aggregated tables.
+                    #qb1.finalQueryList
+                    qb1.buildAggregationTableQueries()
+                    print colored( STATIC_BANNER_SEARCHING_DATA , 'white')
+                    print colored( STATIC_DOTTED_LINE , 'yellow')
+                    print( EMPTY_SPACE )
+                    os1.progressBarPrint( 'Searching Data Per Month:', len(qb1.monthWithDataQueries) )
+                    for i in qb1.monthWithDataQueries:
+                        tempStartDate , tempEndDate, tempQuery = i
+                        db1.queryRDS( tempQuery )
+                        if db1.resultQuery[0][0] != 0:
+                            tempTupleGenerated = ( tempStartDate, tempEndDate )
+                            qb1.dataFoundDates.append( tempTupleGenerated )
+                        os1.myProgressBar.next()
+
+                    print( EMPTY_SPACE )
+                    os1.myProgressBar.finish()
+                    pb1.generaDateQueries(qb1.dataFoundDates)
+                    qb1.generaDataQueries(pb1.finalDatesDataPopulation)
+
+                    print colored( 'Dumping files with the queries.', 'white')
+                    print colored( STATIC_DOTTED_LINE , 'yellow')
+                    print( EMPTY_SPACE )
+
+                    fhb1 = FileHandlerBox()
+                    fhb1.touchOrOpenMyFile()
+                    fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_1 )
+
+                    for i in qb1.childTablesList:
+                        fhb1.currentFile.write( i + '\n' )
+
+                    fhb1.currentFile.write( '\n' )
+                    fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_2 )
+
+                    for i in qb1.functionProcedureList:
+                        fhb1.currentFile.write( i + '\n' )
+
+                    fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_3 )
+                    fhb1.currentFile.write( STATIC_FUNCTION_INSERT )
+                    fhb1.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_1 )
+
+                    fhb2 = FileHandlerBox()
+                    fhb2.touchOrOpenMyFile()
+
+                    for i in qb1.schemasQueries:
+                        fhb2.currentFile.write( i + '\n' )
+
+                    fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_2 )
+
+                    fhb3 = FileHandlerBox()
+                    fhb3.touchOrOpenMyFile()
+
+                    for i in qb1.finalDataInsertQueries:
+                        fhb3.currentFile.write( i + '\n' )
+
+                    fhb1.closeMyFile()
+                    fhb2.closeMyFile()
+                    fhb3.closeMyFile()
+
+                    os.rename( fhb1.currentQueryFileName, 'query.RDS.sql' )
+                    os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
+                    os.rename( fhb3.currentQueryFileName, 'query.inserts.sql' )
+
+                elif os1.whichReport == 'agentHierarchyReport':
+                    # - Agent Hierarchy report
+                    print( 'Agent Hierarchy report' )         
+                elif os1.whichReport == 'serviceProviderTransReport':
+                    # - Service Provider report
+                    print( 'Service Provider report' )
+                 # - Will be building object
+        else:
+            # - Entering error in syntax
+            print colored(STATIC_ERROR_IN_SYNTAX, 'red')   
+            print colored( STATIC_DOTTED_LINE, 'yellow')
+            print( EMPTY_SPACE )
+            print colored(STATIC_USAGE_BANNER, 'yellow')
+            print colored('Just ./sample_report_deployment.py without parameters for interactive session!!!', 'green')
+            print( EMPTY_SPACE )
+            print colored( STATIC_DOTTED_LINE, 'yellow')
+    else:
+        # - Entering incorrect parameters
+        print colored(STATIC_ERROR_IN_SYNTAX, 'red')
+        print colored( STATIC_DOTTED_LINE, 'yellow')
+        print( EMPTY_SPACE )
+        print colored(STATIC_USAGE_BANNER, 'yellow')
+        print colored('Just ./sample_report_deployment.py without parameters for interactive session!!!', 'green')
+        print( EMPTY_SPACE )
+        print colored( STATIC_DOTTED_LINE, 'yellow')
+
+else:
+    # - will go interactive
+    # - Read RDS password
+    os1.readKeyboard("Enter RDS password: ")
     print colored( STATIC_DOTTED_LINE , 'yellow')
     print( EMPTY_SPACE )
-    os1.elegantExit()
-else:
-# - Getting last partition
+    # - Open connection
+
+    db1 = DBbox('RDS',os1.rawKeyboard,'RDS',5432)
+    db1.openConnection(botLogger)
+    print colored( 'Open DB connection.', 'white')
+    print colored( STATIC_DOTTED_LINE , 'yellow')
+    print( EMPTY_SPACE )
+
+    if db1.conexion is None:
+        botLogger.error("Exiting because connection None, Elegant Exit Called")
+        print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+        print colored( STATIC_DOTTED_LINE , 'yellow')
+        print( EMPTY_SPACE )
+        os1.elegantExit()
+    else:
+        tempFlag = True
+        while tempFlag : 
+            OsAgent.clearScreen()
+            print colored( STATIC_LINE, 'yellow')
+            print colored( STATIC_BANNER, 'white')
+            print colored( STATIC_LINE, 'yellow')
+            print( EMPTY_SPACE )
+            os1.mainMenu()
+            os1.readKeyboard('Type 1,2 or 3: ')
+            if os1.rawKeyboard == '1' or os1.rawKeyboard == '2' or os1.rawKeyboard == '3': 
+                tempFlag = False
+            else:
+                OsAgent.clearScreen()
+                print colored( STATIC_DOTTED_LINE , 'yellow')
+                print colored( STATIC_ALERT,'yellow')
+                print colored( STATIC_DOTTED_LINE , 'yellow')
+                os1.waitPlease(1)
+            
+        if os1.rawKeyboard == '1':
+            # - End of day report    
+            # - Getting last partition
+            print colored( 'Getting current partition.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            db1.queryRDS(CURRENT_PARTITION_QUERY)
+            pb1 = PartitionBox()
+            pb1.partition = db1.resultQuery
+            pb1.stackPartition(TABLE_NAME_EOD_SUM_REPORT)
+            pb1.addTuple()
+
+            # - Generate tuples in the list
+            print colored( 'Generating tuples for queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            qb1 = QueryBuilder()
+            qb1.addTuple( pb1.partitionTuple )
+
+            # - Generate child tables detail
+            print colored( 'Generating Child Tables queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            qb1.generateChildTableQuery()
+
+            # - Get schemas to generate backups & procedures
+            print colored( 'Building other schema quieres.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            db1.queryRDS(CURRENT_SCHEMAS_QUERY)
+            qb1.schemasList = db1.resultQueryClean
+            qb1.buildShemaQueries()
+
+            # - Generate queries for aggregated tables.
+            #qb1.finalQueryList
+            qb1.buildAggregationTableQueries()
+            print colored( STATIC_BANNER_SEARCHING_DATA , 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            os1.progressBarPrint( 'Searching Data Per Month:', len(qb1.monthWithDataQueries) )
+            for i in qb1.monthWithDataQueries:
+                tempStartDate , tempEndDate, tempQuery = i
+                db1.queryRDS( tempQuery )
+                if db1.resultQuery[0][0] != 0:
+                    tempTupleGenerated = ( tempStartDate, tempEndDate )
+                    qb1.dataFoundDates.append( tempTupleGenerated )
+                os1.myProgressBar.next()
+
+            print( EMPTY_SPACE )
+            os1.myProgressBar.finish()
+            pb1.generaDateQueries(qb1.dataFoundDates)
+            qb1.generaDataQueries(pb1.finalDatesDataPopulation)
+
+            print colored( 'Dumping files with the queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+
+            fhb1 = FileHandlerBox()
+            fhb1.touchOrOpenMyFile()
+            fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_1 )
+
+            for i in qb1.childTablesList:
+                fhb1.currentFile.write( i + '\n' )
+
+            fhb1.currentFile.write( '\n' )
+            fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_2 )
+
+            for i in qb1.functionProcedureList:
+                fhb1.currentFile.write( i + '\n' )
+
+            fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_3 )
+            fhb1.currentFile.write( STATIC_FUNCTION_INSERT )
+            fhb1.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_1 )
+
+            fhb2 = FileHandlerBox()
+            fhb2.touchOrOpenMyFile()
+
+            for i in qb1.schemasQueries:
+                fhb2.currentFile.write( i + '\n' )
+
+            fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_2 )
+
+            fhb3 = FileHandlerBox()
+            fhb3.touchOrOpenMyFile()
+
+            for i in qb1.finalDataInsertQueries:
+                fhb3.currentFile.write( i + '\n' )
+
+            fhb1.closeMyFile()
+            fhb2.closeMyFile()
+            fhb3.closeMyFile()
+
+            os.rename( fhb1.currentQueryFileName, 'query.RDS.sql' )
+            os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
+            os.rename( fhb3.currentQueryFileName, 'query.inserts.sql' )
+
+        elif os1.rawKeyboard == '2':
+            # - Agent Hierarchy report
+            print( 'Agent Hierarchy report' )         
+        elif os1.rawKeyboard == '3':
+            # - Service Provider report
+            print( 'Service Provider report' )
+
+"""
+    # - Getting last partition
     print colored( 'Getting current partition.', 'white')
     print colored( STATIC_DOTTED_LINE , 'yellow')
     print( EMPTY_SPACE )
@@ -517,3 +823,4 @@ fhb3.closeMyFile()
 os.rename( fhb1.currentQueryFileName, 'query.RDS.sql' )
 os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
 os.rename( fhb3.currentQueryFileName, 'query.inserts.sql' )
+"""
