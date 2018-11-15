@@ -28,16 +28,27 @@ STATIC_BANNER_SEARCHING_DATA = "Searching stored data in report$reservation:"
 STATIC_NON_INTERACTIVE_BANNER = "Entering non interactive mode."
 STATIC_ERROR_IN_SYNTAX = "Error in syntax, dropping session & calling ellegant exit."
 STATIC_USAGE_BANNER = """
-Usage:
+##########DEPLOYMENT USAGE##########
+
 ./sample_report_deployment.py nonInteractive RDS_User_Password Function
 
-Or Version detail:
-./sample_report_deployment.py version
+Deployment mode functions are: generateEODReport | agentHierarchyReport | serviceProviderTransReport | generateEODReportRollback | agentHierarchyReportRollback | serviceProviderTransReportRollback
 
 Example:
 ./sample_report_deployment.py nonInteractive ABc123456 generateEODReport
 
-Functions are: generateEODReport | agentHierarchyReport | serviceProviderTransReport | generateEODReportRollback | agentHierarchyReportRollback | serviceProviderTransReportRollback
+##########DVERSION DETAIL##########
+
+./sample_report_deployment.py version
+
+##########MAINTENANCE MODE USAGE##########
+
+./sample_report_deployment.py maintenance RDS_User_Password Function
+
+Example:
+./sample_report_deployment.py maintenance ABc123456 EODReport
+
+Maintenance Functions are: EODReport | HierarchyReport | SPTransReport
 """
 STATIC_MENU_BANNER = """Select your report:
 
@@ -217,6 +228,7 @@ class OsAgent:
     myselfScript = ""
     rawKeyboard = ""
     validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport','generateEODReportRollback','agentHierarchyReportRollback','serviceProviderTransReportRollback']
+    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport']
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -351,6 +363,7 @@ class QueryBuilder:
     monthWithDataQueries = []
     dataFoundDates = []
     finalDataInsertQueries = []
+    eodMaintenanceQueries = []
 
     def addTuple(self,myTuple):
         self.finalQueryList.append(myTuple) 
@@ -416,6 +429,13 @@ class QueryBuilder:
             myTempQuery = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( i, i )
             self.finalDataInsertQueries.append( myTempQuery )
 
+    def generateMaintenanceQueriesEOD(self):
+        TODAY = datetime.today().strftime('%Y-%m-%d')
+        tempString = 'SELECT COUNT(*) FROM reporting$eod_trans_sum_table WHERE start_date = \'%s\';' % ( TODAY )
+        self.eodMaintenanceQueries.append(tempString)
+        tempString2 = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( TODAY, TODAY )
+        self.eodMaintenanceQueries.append(tempString2)
+
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 class FileHandlerBox:
@@ -447,6 +467,7 @@ class FinalReport:
         # - Open connection
         db1 = DBbox('RDS',db1.passwd,'RDS',5432)
         db1.openConnection(botLogger)
+        print( EMPTY_SPACE )
         print colored( 'Open DB connection.', 'white')
         print colored( STATIC_DOTTED_LINE , 'yellow')
         print( EMPTY_SPACE )
@@ -598,6 +619,31 @@ class FinalReport:
             os.rename( fhb4.currentQueryFileName, 'query.RDS.Rollback.sql' )
             os.rename( fhb5.currentQueryFileName, 'query.postgres.Rollback.sql' )
 
+    def eodMaintenance(self,db1,qb1):
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            os1.elegantExit()
+        else:
+            # - Get schemas to generate rollback queries
+            qb1.generateMaintenanceQueriesEOD()
+            countQuery, insertQuery = qb1.eodMaintenanceQueries
+            db1.queryRDS(countQuery)
+            if db1.resultQuery[0][0] == 0:
+                 db1.queryRDS(insertQuery)
+                 if db1.resultQuery[0][0] == 1:
+                     db1.queryRDS(countQuery)
+                     if db1.resultQuery[0][0] != 0:
+                         os1.elegantExit()
+                     else:
+                         botLogger.error("Error executing count validation.")
+                 else:
+                     botLogger.error("Error executing INSERT procedure.")
+            else:
+                botLogger.error("Error, trigger not executed because current date present in the system")
+
     def agentHierarchyReport(self):
         pass
 
@@ -621,7 +667,6 @@ class FinalReport:
         print colored( STATIC_DOTTED_LINE, 'yellow')
         print colored(FinalReport.myVersion, 'green')
         print colored( STATIC_DOTTED_LINE, 'yellow')
-
 
 # +-+-+-+-+-+-+-+-+-+-+ +-+-+-+-+-+
 # |D|E|P|L|O|Y|M|E|N|T| |L|O|G|I|C|
@@ -652,22 +697,19 @@ if len(os1.parametersList) != 1:
     print colored( STATIC_DOTTED_LINE, 'yellow')
     print( EMPTY_SPACE )
     if len( os1.parametersList ) == 4:
+        os1.controlInteractive()
+        db1 = DBbox('RDS',os1.token,'RDS',5432)
+        pb1 = PartitionBox()
+        qb1 = QueryBuilder()
+        fhb1 = FileHandlerBox()
+        fhb2 = FileHandlerBox()
+        fhb3 = FileHandlerBox()
+        fhb4 = FileHandlerBox()
+        fhb5 = FileHandlerBox()
+        myReportBox = FinalReport()
+
         if os1.parametersList[1] == 'nonInteractive' and os1.parametersList[3] in os1.validReports:
             # - Entering non interactive
-            os1.controlInteractive()
-            # - will go interactive
-            # - Read RDS password
-            # - Open connection
-            db1 = DBbox('RDS',os1.token,'RDS',5432)
-            pb1 = PartitionBox()
-            qb1 = QueryBuilder()
-            fhb1 = FileHandlerBox()
-            fhb2 = FileHandlerBox()
-            fhb3 = FileHandlerBox()
-            fhb4 = FileHandlerBox()
-            fhb5 = FileHandlerBox()
-            myReportBox = FinalReport()
-                
             if os1.whichReport == 'generateEODReport':
                 # - EOD report
                 myReportBox.generateEODReport(db1,pb1,qb1,fhb1,fhb2,fhb3)
@@ -687,6 +729,17 @@ if len(os1.parametersList) != 1:
             elif os1.whichReport == 'serviceProviderTransReportRollback':
                 # - Service Provider report
                 print( 'Service Provider report Rollback' )
+        elif os1.parametersList[1] == 'maintenance' and os1.parametersList[3] in os1.validMaintenanceFunctions:
+            os1.controlInteractive()
+            if os1.whichReport == 'EODReport':
+                # - EOD report
+                myReportBox.eodMaintenance(db1,qb1)
+            elif os1.whichReport == 'HierarchyReport':
+                # - Agent Hierarchy report
+                print( 'Maintenance for Agent Hierarchy Report' )
+            elif os1.whichReport == 'SPTransReport':
+                # - Service Provider report
+                print( 'Maintenance for Service Provider report' )
         else:
             # - Entering error in syntax
             FinalReport.dropTrashUsage()
@@ -696,7 +749,7 @@ if len(os1.parametersList) != 1:
             OsAgent.elegantExit()
         else:
             # - Print trashy help
-            FinalReport.dropTrashUsage()         
+            FinalReport.dropTrashUsage()      
     else:
         # - Entering incorrect parameters
         FinalReport.dropTrashUsage()
