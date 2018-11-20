@@ -48,7 +48,7 @@ Example:
 Example:
 ./sample_report_deployment.py maintenance ABc123456 EODReport
 
-Maintenance Functions are: EODReport | HierarchyReport | SPTransReport
+Maintenance Functions are: EODReport | HierarchyReport | SPTransReport | EODReportM | HierarchyReportM | SPTransReportM
 """
 STATIC_MENU_BANNER = """Select your report:
 
@@ -90,7 +90,7 @@ STATIC_TABLE_PART_EOD_SUMM_1 = """CREATE TABLE "reporting$eod_trans_sum_table" (
 
 """
 
-STATIC_TABLE_PART_EOD_SUMM_2 = """CREATE FUNCTION "reporting$eod_trans_sum_insert_function"() RETURNS trigger
+STATIC_TABLE_PART_EOD_SUMM_2 = """CREATE OR REPLACE FUNCTION "reporting$eod_trans_sum_insert_function"() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
 BEGIN
@@ -102,12 +102,14 @@ STATIC_TABLE_PART_EOD_SUMM_3 = """  ELSE
   RETURN NULL;
 END;
 $_$;
+"""
 
+STATIC_TABLE_PART_EOD_SUMM_4 = """
 CREATE TRIGGER "reporting$eod_trans_sum_table_trigger" BEFORE INSERT ON "reporting$eod_trans_sum_table" FOR EACH ROW EXECUTE PROCEDURE "reporting$eod_trans_sum_insert_function"();
 
 """
 
-STATIC_FUNCTION_INSERT = """CREATE FUNCTION "end_of_day_transaction_summary_insert"(starttime date, endtime date) RETURNS VOID
+STATIC_FUNCTION_INSERT = """CREATE OR REPLACE FUNCTION "end_of_day_transaction_summary_insert"(starttime date, endtime date) RETURNS VOID
   LANGUAGE SQL
   AS $_$
     INSERT INTO reporting$eod_trans_sum_table
@@ -228,7 +230,7 @@ class OsAgent:
     myselfScript = ""
     rawKeyboard = ""
     validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport','generateEODReportRollback','agentHierarchyReportRollback','serviceProviderTransReportRollback']
-    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport']
+    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport','EODReportM','HierarchyReportM','SPTransReportM']
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -292,10 +294,18 @@ class DBbox:
             #print(err)
             cls.exception("Exception occurred connecting to the database")
         
+    def closeConnection(self, cls):
+        try:
+            self.conexion.close()
+        except Exception as err:
+            #print(err)
+            cls.exception("Exception occurred during closing session with the database")
+
     def queryRDS(self,query):
         try:
             self.internalCursor = self.conexion.cursor()
             self.internalCursor.execute(query)
+            self.conexion.commit()
             self.resultQuery = self.internalCursor.fetchall()
 
             # - Codigo Limpia Shit
@@ -312,6 +322,7 @@ class DBbox:
 class PartitionBox:
 
     partition = None
+    nextPartition = None
     data_rango = tuple()
     partitionTuple = None
     inicio =""
@@ -349,6 +360,22 @@ class PartitionBox:
                 myFinalDateString = myFinalDateObject.strftime('%Y-%m-%d')
                 self.finalDatesDataPopulation.append( myFinalDateString )
 
+    def stackPartitionEODMontly(self,table):
+        self.table = table + str(self.nextPartition)
+        tempYear = datetime.today().year
+        tempMonth = datetime.today().month
+        if tempMonth == 12:
+            tempMonth = 01
+            tempYear += tempYear                   
+        else:
+            tempMonth += 01
+        self.inicio = str(tempYear) + '-' + str(tempMonth) + '-' + '01'
+        self.data_rango = calendar.monthrange(tempYear, tempMonth)
+        self.fin = str(tempYear) + '-' + str(tempMonth) + '-' + str(self.data_rango[1])
+        x = datetime.strptime(self.fin,self.FORMAT_STRING)
+        self.fin =  x + timedelta(days=1)
+        self.fin = self.fin.strftime('%Y-%m-%d')
+
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 class QueryBuilder:
@@ -364,6 +391,7 @@ class QueryBuilder:
     dataFoundDates = []
     finalDataInsertQueries = []
     eodMaintenanceQueries = []
+    eodMaintenanceConsolidationList = []
 
     def addTuple(self,myTuple):
         self.finalQueryList.append(myTuple) 
@@ -394,14 +422,36 @@ class QueryBuilder:
         firstOne = True
         for processTuple in self.finalQueryList:
             table, inicio, fin = processTuple
-            #tempString = 'CREATE TABLE "%s" ( CONSTRAINT "%s_check" CHECK (((end_date >= \'' % ( table, table ) #+ inicio + '' ) AND (end_date < '' + fin + '' )))) INHERITS ("reporting$eod_trans_sum_table");'
             self.childTablesList.append('CREATE TABLE "%s" ( CONSTRAINT "%s_check" CHECK (((end_date >= \'%s\' ) AND (end_date < \'%s\' )))) INHERITS ("reporting$eod_trans_sum_table");' % ( table, table, inicio, fin ) )
-            #self.childTablesList.append(tempString)
             if firstOne:
                 self.functionProcedureList.append('  IF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);' % ( inicio, fin, table ) )
                 firstOne = False
             else:
                 self.functionProcedureList.append('  ELSEIF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);' % ( inicio, fin, table ) )
+
+    def generateChildTableQueryEODM(self):
+        # - Tuple Processing
+        table, inicio, fin = self.finalQueryList[0]
+        self.childTablesList.append('ALTER TABLE %s DROP CONSTRAINT %s_check;\n' % ( table, table ) )
+        self.childTablesList.append('TRUNCATE TABLE %s;\n' % ( table ) )
+        self.childTablesList.append('ALTER TABLE %s ADD CONSTRAINT %s_check CHECK ( end_date >= \'%s\' AND end_date < \'%s\' );\n' % ( table, table, inicio, fin ) )
+        firstOne = True
+        for processTuple in self.finalQueryList:
+            table, inicio, fin = processTuple
+            if firstOne:
+                self.functionProcedureList.append('  IF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);\n' % ( inicio, fin, table ) )
+                firstOne = False
+            else:
+                self.functionProcedureList.append('  ELSEIF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);\n' % ( inicio, fin, table ) )
+
+    def consolidateEODM(self):
+        for i in self.childTablesList:
+            self.eodMaintenanceConsolidationList.append(i)
+        tempString = STATIC_TABLE_PART_EOD_SUMM_2
+        for j in self.functionProcedureList:
+            tempString = tempString + j
+        tempString = tempString + STATIC_TABLE_PART_EOD_SUMM_3         
+        self.eodMaintenanceConsolidationList.append(tempString)
 
     def buildShemaQueries(self):
         # - Build queries for schemas
@@ -412,9 +462,7 @@ class QueryBuilder:
     def buildShemaQueriesRollback(self):
         # - Build queries for Rollbacks using schemas
         for i in self.schemasList:
-            #self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$end_of_day_transaction_summary(date,date);' % ( i ) + '\n' )
             self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$end_of_day_transaction_summary(date,date);' % ( i ) )
-            #self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary_orig"(date, date) RENAME TO example$end_of_day_transaction_summary;' % ( i ) + '\n' )
             self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary_orig"(date, date) RENAME TO example$end_of_day_transaction_summary;' % ( i ) )
 
     def buildAggregationTableQueries(self):
@@ -430,10 +478,10 @@ class QueryBuilder:
             self.finalDataInsertQueries.append( myTempQuery )
 
     def generateMaintenanceQueriesEOD(self):
-        TODAY = datetime.today().strftime('%Y-%m-%d')
-        tempString = 'SELECT COUNT(*) FROM reporting$eod_trans_sum_table WHERE start_date = \'%s\';' % ( TODAY )
+        YESTERDAY = ( datetime.today() - timedelta(1) ).strftime('%Y-%m-%d')
+        tempString = 'SELECT COUNT(*) FROM reporting$eod_trans_sum_table WHERE start_date = \'%s\';' % ( YESTERDAY )
         self.eodMaintenanceQueries.append(tempString)
-        tempString2 = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( TODAY, TODAY )
+        tempString2 = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( YESTERDAY, YESTERDAY )
         self.eodMaintenanceQueries.append(tempString2)
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -461,7 +509,7 @@ class FileHandlerBox:
 
 class FinalReport:
 
-    myVersion = "Current Version is : 1.0 - support for EOD report Only"
+    myVersion = "Current Version is : 2.0 - support for EOD report - Rollbak - Daily & Montly Maintenance routines."
 
     def generateEODReport(self,db1,pb1,qb1,fhb1,fhb2,fhb3):
         # - Open connection
@@ -549,6 +597,7 @@ class FinalReport:
                 fhb1.currentFile.write( i + '\n' )
 
             fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_3 )
+            fhb1.currentFile.write( STATIC_TABLE_PART_EOD_SUMM_4 )
             fhb1.currentFile.write( STATIC_FUNCTION_INSERT )
             fhb1.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_1 )
 
@@ -630,26 +679,78 @@ class FinalReport:
             # - Get schemas to generate rollback queries
             qb1.generateMaintenanceQueriesEOD()
             countQuery, insertQuery = qb1.eodMaintenanceQueries
+            print( countQuery )
+            print( insertQuery )
             db1.queryRDS(countQuery)
             if db1.resultQuery[0][0] == 0:
                  db1.queryRDS(insertQuery)
                  if db1.resultQuery[0][0] == 1:
                      db1.queryRDS(countQuery)
                      if db1.resultQuery[0][0] != 0:
+                         botLogger.error("INSERT process completed.")
                          os1.elegantExit()
                      else:
-                         botLogger.error("Error executing count validation.")
+                         botLogger.error("Error executing count validation after INSERT.")
                  else:
-                     botLogger.error("Error executing INSERT procedure.")
+                     botLogger.error("Error executing INSERT procedure, check if effective data is present in rds$reservation tables.")
             else:
                 botLogger.error("Error, trigger not executed because current date present in the system")
 
-    def agentHierarchyReport(self):
-        pass
+    def eodMaintenanceMontly(self,db1,pb1,qb1,fhb1):
+        tempList = []
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            os1.elegantExit()
+        else:
+            # - Getting last partition
+            db1.queryRDS(CURRENT_PARTITION_QUERY)
+            pb1 = PartitionBox()
+            pb1.partition = db1.resultQuery
+            pb1.nextPartition = int(pb1.partition[0][0]) + 1
+            if pb1.nextPartition > 35:
+                pb1.nextPartition = 0
+            pb1.stackPartitionEODMontly(TABLE_NAME_EOD_SUM_REPORT)
+            pb1.addTuple()
+            # - Generate tuples in the list
+            qb1 = QueryBuilder()
+            qb1.addTuple( pb1.partitionTuple )
+
+            # - Generate final query array
+            qb1.generateChildTableQueryEODM()
+            qb1.consolidateEODM()
+
+            #fhb1 = FileHandlerBox()
+            #fhb1.touchOrOpenMyFile()
+
+            #for i in qb1.eodMaintenanceConsolidationList:
+            #    fhb1.currentFile.write(i)
+
+            #fhb1.closeMyFile()
+            #db1.closeConnection(botLogger)
+
+            #db2 = DBbox('RDS',db1.passwd,'RDS',5432)
+            #db2.openConnection(botLogger)
+            if db1.conexion is None:
+                botLogger.error("Exiting because connection None, Elegant Exit Called")
+                os1.elegantExit()
+            else:
+                for manQuery in qb1.eodMaintenanceConsolidationList:
+                    #print( manQuery )
+                    db1.queryRDS(manQuery)
+                    #print( db1.cursorLenght )
+                    #print( db1.resultQuery )
+                    #print( db2.resultQueryClean )
+                db1.closeConnection(botLogger)
+        
 
     def serviceProviderTransReport(self):
         pass
 
+ 
     @staticmethod
     def dropTrashUsage():
         # - Entering error in syntax
@@ -740,6 +841,16 @@ if len(os1.parametersList) != 1:
             elif os1.whichReport == 'SPTransReport':
                 # - Service Provider report
                 print( 'Maintenance for Service Provider report' )
+            elif os1.whichReport == 'EODReportM':
+                # - EOD Montly Maintenance
+                print( 'Montly Maintenance for EOD Report' )
+                myReportBox.eodMaintenanceMontly(db1,pb1,qb1,fhb1)
+            elif os1.whichReport == 'HierarchyReportM':
+                # - Hierarchy Report Montly Maintenance
+                print( 'Montly Maintenance for Hierarchy Report' )
+            elif os1.whichReport == 'SPTransReportM':
+                # - SP Montly Maintenance
+                print( 'Montly Maintenance for SP Transaction Report' )
         else:
             # - Entering error in syntax
             FinalReport.dropTrashUsage()
