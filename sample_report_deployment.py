@@ -58,6 +58,7 @@ STATIC_MENU_BANNER = """Select your report:
 [4] End of day summary report - ROLLBACK.
 [5] Agent hierarchy transaction summary report - ROLLBACK.
 [6] Service provider transaction summary report - ROLLBACK.
+[7] Exit.
 ................................................................."""
 
 STATIC_ALERT = "    H A V E   T O   B E  1, 2, 3, 4, 5  OR  6 !"
@@ -679,8 +680,6 @@ class FinalReport:
             # - Get schemas to generate rollback queries
             qb1.generateMaintenanceQueriesEOD()
             countQuery, insertQuery = qb1.eodMaintenanceQueries
-            print( countQuery )
-            print( insertQuery )
             db1.queryRDS(countQuery)
             if db1.resultQuery[0][0] == 0:
                  db1.queryRDS(insertQuery)
@@ -739,17 +738,11 @@ class FinalReport:
                 os1.elegantExit()
             else:
                 for manQuery in qb1.eodMaintenanceConsolidationList:
-                    #print( manQuery )
                     db1.queryRDS(manQuery)
-                    #print( db1.cursorLenght )
-                    #print( db1.resultQuery )
-                    #print( db2.resultQueryClean )
                 db1.closeConnection(botLogger)
-        
 
     def serviceProviderTransReport(self):
         pass
-
  
     @staticmethod
     def dropTrashUsage():
@@ -843,7 +836,6 @@ if len(os1.parametersList) != 1:
                 print( 'Maintenance for Service Provider report' )
             elif os1.whichReport == 'EODReportM':
                 # - EOD Montly Maintenance
-                print( 'Montly Maintenance for EOD Report' )
                 myReportBox.eodMaintenanceMontly(db1,pb1,qb1,fhb1)
             elif os1.whichReport == 'HierarchyReportM':
                 # - Hierarchy Report Montly Maintenance
@@ -889,8 +881,8 @@ else:
         print colored( STATIC_LINE, 'yellow')
         print( EMPTY_SPACE )
         os1.mainMenu()
-        os1.readKeyboard('Type 1 to 6 options: ')
-        if os1.rawKeyboard == '1' or os1.rawKeyboard == '2' or os1.rawKeyboard == '3' or os1.rawKeyboard == '4' or os1.rawKeyboard == '5' or os1.rawKeyboard == '6':
+        os1.readKeyboard('Type 1 to 7 options: ')
+        if os1.rawKeyboard == '1' or os1.rawKeyboard == '2' or os1.rawKeyboard == '3' or os1.rawKeyboard == '4' or os1.rawKeyboard == '5' or os1.rawKeyboard == '6' or os1.rawKeyboard == '7':
             tempFlag = False
         else:
             OsAgent.clearScreen()
@@ -918,4 +910,7 @@ else:
     elif os1.rawKeyboard == '6':
         # - Service Provider report Rollback
         print( 'Service Provider report Rollback' )
-
+    elif os1.rawKeyboard == '7':
+        # - Service Provider report Rollback
+        print( 'Elegant Exit called.' )
+        os1.elegantExit()
