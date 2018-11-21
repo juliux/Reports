@@ -61,7 +61,7 @@ STATIC_MENU_BANNER = """Select your report:
 [7] Exit.
 ................................................................."""
 
-STATIC_ALERT = "    H A V E   T O   B E  1, 2, 3, 4, 5  OR  6 !"
+STATIC_ALERT = "    H A V E   T O   B E  1, 2, 3, 4, 5, 6  OR 7 !"
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -91,7 +91,32 @@ STATIC_TABLE_PART_EOD_SUMM_1 = """CREATE TABLE "reporting$eod_trans_sum_table" (
 
 """
 
+STATIC_TABLE_PART_HIE_SUMM_1 = """CREATE TABLE "reporting$accountholder_hierarchy_sum_table" (
+  id SERIAL,
+  insert_date DATE NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  frol1parentid bigint, 
+  frol1parentfirstname text, 
+  frol1parentlastname text, 
+  frol2parentid bigint, 
+  frol2parentfirstname text, 
+  frol2parentlastname text, 
+  currency text, 
+  count bigint, 
+  sum numeric, 
+  operation text
+);
+
+"""
+
 STATIC_TABLE_PART_EOD_SUMM_2 = """CREATE OR REPLACE FUNCTION "reporting$eod_trans_sum_insert_function"() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+"""
+
+STATIC_TABLE_PART_HIE_SUMM_2 = """CREATE OR REPLACE FUNCTION "reporting$accountholder_hierarchy_sum_insert_function"() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
 BEGIN
@@ -105,8 +130,21 @@ END;
 $_$;
 """
 
+STATIC_TABLE_PART_HIE_SUMM_3 = """  ELSE
+    RAISE EXCEPTION 'out of range: %. Fix function reporting$accountholder_hierarchy_sum_insert_function()', NEW.end_date;
+  END IF;
+  RETURN NULL;
+END;
+$_$;
+"""
+
 STATIC_TABLE_PART_EOD_SUMM_4 = """
 CREATE TRIGGER "reporting$eod_trans_sum_table_trigger" BEFORE INSERT ON "reporting$eod_trans_sum_table" FOR EACH ROW EXECUTE PROCEDURE "reporting$eod_trans_sum_insert_function"();
+
+"""
+
+STATIC_TABLE_PART_HIE_SUMM_4 = """
+CREATE TRIGGER "reporting$accountholder_hierarchy_sum_table_trigger" BEFORE INSERT ON "reporting$accountholder_hierarchy_sum_table" FOR EACH ROW EXECUTE PROCEDURE "reporting$accountholder_hierarchy_sum_insert_function"();
 
 """
 
@@ -142,6 +180,54 @@ STATIC_FUNCTION_INSERT = """CREATE OR REPLACE FUNCTION "end_of_day_transaction_s
 
 """
 
+STATIC_FUNCTION_INSERT_2 = """CREATE OR REPLACE FUNCTION "accountholder_hierarchy_sum_insert"(starttime date, endtime date) RETURNS VOID
+  LANGUAGE SQL
+  AS $_$
+    INSERT INTO reporting$accountholder_hierarchy_sum_table
+    ( insert_date, start_date, end_date, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, currency, count, sum, operation )
+    (     
+      (select
+        now()::date              as insert_date,
+        createdtime              as start_date,
+        finalizedtime            as end_date,
+        fromfrol1parentid        as frol1parentid,
+        fromfrol1parentfirstname as frol1parentfirstname,
+        fromfrol1parentlastname  as frol1parentlastname,
+        fromfrol2parentid        as frol2parentid,
+        fromfrol2parentfirstname as frol2parentfirstname,
+        fromfrol2parentlastname  as frol2parentlastname,
+        currencycode             as currency,
+        count(*)                 as count,
+        sum(coalesce(amount, 0.0)) as sum,
+        operationtype            as operation
+      from "global".committed_financialevent(starttime, endtime)
+      where operationtype in ('CASH_IN', 'PAYMENT', 'BATCH_TRANSFER', 'CREATE_CASH_VOUCHER') and fromfrol2parentid is not null
+      group by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
+      order by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)
+      union all
+      (select
+        now()::date              as insert_date,
+        createdtime              as start_date,
+        finalizedtime            as end_date,
+        tofrol1parentid          as frol1parentid,
+        tofrol1parentfirstname   as frol1parentfirstname,
+        tofrol1parentlastname    as frol1parentlastname,
+        tofrol2parentid          as frol2parentid,
+        tofrol2parentfirstname   as frol2parentfirstname,
+        tofrol2parentlastname    as frol2parentlastname,
+        currencycode             as currency,
+        count(*)                 as count,
+        sum(coalesce(amount, 0.0)) as sum,
+        operationtype            as operation
+      from "global".committed_financialevent(starttime, endtime)
+      where operationtype in ('CASH_OUT', 'TRANSFER_FROM_VOUCHER', 'REDEEM_CASH_VOUCHER') and tofrol2parentid is not null
+      group by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
+      order by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)      
+    );
+  $_$;
+
+"""
+
 STATIC_NEW_EOD_FUNCTION_GENERAL = """ RETURNS TABLE(start_date date, end_date date, operation text, total_count numeric, currency text, total_amount numeric, total_fees numeric, total_discounts numeric, total_promotions numeric, total_coupons numeric, additional_info text)
  LANGUAGE sql
  STABLE SECURITY DEFINER
@@ -161,6 +247,29 @@ AS $function$
   from "RDS".reporting$eod_trans_sum_table
   where end_date BETWEEN starttime AND endtime
   group by operation, currency, additional_info
+$function$;
+"""
+
+STATIC_NEW_HIE_FUNCTION_GENERAL = """ RETURNS TABLE(frol1parentid bigint, frol1parentfirstname text, frol1parentlastname text, frol2parentid bigint, frol2parentfirstname text, frol2parentlastname text, currency text, count numeric, sum numeric, operation text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+AS $function$
+(select
+  frol1parentid            as frol1parentid,
+  frol1parentfirstname     as frol1parentfirstname,
+  frol1parentlastname      as frol1parentlastname,
+  frol2parentid            as frol2parentid,
+  frol2parentfirstname     as frol2parentfirstname,
+  frol2parentlastname      as frol2parentlastname,
+  currency                 as currency,
+  sum(count)               as count,
+  sum(sum)                 as sum,
+  operation                as operation
+from "RDS".reporting$accountholder_hierarchy_sum_table
+where end_date BETWEEN starttime AND endtime
+and operation in ('CASH_IN', 'PAYMENT', 'BATCH_TRANSFER', 'CREATE_CASH_VOUCHER', 'CASH_OUT', 'TRANSFER_FROM_VOUCHER', 'REDEEM_CASH_VOUCHER') and frol2parentid is not null
+group by frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
+order by frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)
 $function$;
 """
 
@@ -204,11 +313,46 @@ ALTER TABLE "reporting$eod_trans_sum_table_p35" OWNER TO "RDS";
 """
 
 STATIC_GRANTS_FOR_NEW_OBJECTS_2 = """ALTER FUNCTION "RDS"."end_of_day_transaction_summary_insert"(date,date) OWNER TO postgres;
-ALTER FUNCTION "Stanbic"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;
-ALTER FUNCTION "global"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;
-GRANT ALL ON FUNCTION "Stanbic"."example$end_of_day_transaction_summary"(date,date) TO "RDS";
-GRANT ALL ON FUNCTION "global"."example$end_of_day_transaction_summary"(date,date) TO "RDS";
 GRANT ALL ON FUNCTION "RDS"."end_of_day_transaction_summary_insert"(date,date) TO "RDS";
+"""
+
+STATIC_GRANTS_FOR_NEW_OBJECTS_3 = """ALTER TABLE "reporting$accountholder_hierarchy_sum_table" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p0" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p1" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p2" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p3" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p4" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p5" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p6" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p7" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p8" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p9" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p10" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p11" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p12" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p13" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p14" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p15" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p16" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p17" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p18" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p19" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p20" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p21" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p22" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p23" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p24" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p25" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p26" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p27" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p28" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p29" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p30" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p31" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p32" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p33" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p34" OWNER TO "RDS";
+ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p35" OWNER TO "RDS";
 """
 
 STATIC_EOD_ROLLBACK_OBJECT_1 = """DROP TABLE reporting$eod_trans_sum_table CASCADE;
@@ -387,6 +531,7 @@ class QueryBuilder:
     FORMAT_STRING = "%Y-%m-%d"
     schemasList = [] 
     schemasQueries = []
+    schemasQueriesGrants = []
     schemasQueriesRollback = []
     monthWithDataQueries = []
     dataFoundDates = []
@@ -459,6 +604,8 @@ class QueryBuilder:
         for i in self.schemasList:
             self.schemasQueries.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date, date) RENAME TO example$end_of_day_transaction_summary_orig;' % ( i ) + '\n' )
             self.schemasQueries.append( 'CREATE OR REPLACE FUNCTION "%s"."example$end_of_day_transaction_summary"(starttime date, endtime date)' % ( i ) + '\n' + STATIC_NEW_EOD_FUNCTION_GENERAL )
+            self.schemasQueriesGrants.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;\n' % ( i ) )
+            self.schemasQueriesGrants.append( 'GRANT ALL ON FUNCTION "%s"."example$end_of_day_transaction_summary"(date,date) TO "RDS";\n' % ( i ) )
 
     def buildShemaQueriesRollback(self):
         # - Build queries for Rollbacks using schemas
@@ -609,6 +756,9 @@ class FinalReport:
                 fhb2.currentFile.write( i + '\n' )
 
             fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_2 )
+
+            for i in qb1.schemasQueriesGrants:
+                fhb2.currentFile.write( i )
 
             fhb3 = FileHandlerBox()
             fhb3.touchOrOpenMyFile()
