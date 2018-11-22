@@ -270,7 +270,6 @@ AS $function$
   operation                as operation
 from "RDS".reporting$accountholder_hierarchy_sum_table
 where end_date BETWEEN starttime AND endtime
-and operation in ('CASH_IN', 'PAYMENT', 'BATCH_TRANSFER', 'CREATE_CASH_VOUCHER', 'CASH_OUT', 'TRANSFER_FROM_VOUCHER', 'REDEEM_CASH_VOUCHER') and frol2parentid is not null
 group by frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
 order by frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)
 $function$;
@@ -551,6 +550,7 @@ class QueryBuilder:
     finalDataInsertQueries = []
     eodMaintenanceQueries = []
     eodMaintenanceConsolidationList = []
+    hieIndexQueries = []
 
     def addTuple(self,myTuple,index):
         self.finalQueryList.append(myTuple) 
@@ -581,11 +581,14 @@ class QueryBuilder:
             self.finalQueryList.append(finalTempTuple)
             table, inicio, fin = finalTempTuple
     
-    def generateChildTableQuery(self,fatherTable):
+    def generateChildTableQuery(self,fatherTable,index):
         # - Tuple Processing
         firstOne = True
         for processTuple in self.finalQueryList:
             table, inicio, fin = processTuple
+            if index == 2:
+                self.hieIndexQueries.append( 'CREATE INDEX "%s_start_date_ix" ON "%s" USING btree (start_date);' % ( table, table ) )
+                self.hieIndexQueries.append( 'CREATE INDEX "%s_end_date_ix" ON "%s" USING btree (end_date);' % ( table, table ) )
             self.childTablesList.append('CREATE TABLE "%s" ( CONSTRAINT "%s_check" CHECK (((end_date >= \'%s\' ) AND (end_date < \'%s\' )))) INHERITS ("%s");' % ( table, table, inicio, fin, fatherTable ) )
             if firstOne:
                 self.functionProcedureList.append('  IF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);' % ( inicio, fin, table ) )
@@ -748,7 +751,7 @@ class FinalReport:
             print colored( 'Generating Child Tables queries.', 'white')
             print colored( STATIC_DOTTED_LINE , 'yellow')
             print( EMPTY_SPACE )
-            qb1.generateChildTableQuery(TABLE_NAME_EOD_SUM_REPORT2)
+            qb1.generateChildTableQuery(TABLE_NAME_EOD_SUM_REPORT2,1)
 
             # - Get schemas to generate backups & procedures
             print colored( 'Building other schema queries.', 'white')
@@ -863,7 +866,7 @@ class FinalReport:
             print colored( 'Generating Child Tables queries.', 'white')
             print colored( STATIC_DOTTED_LINE , 'yellow')
             print( EMPTY_SPACE )
-            qb1.generateChildTableQuery(TABLE_NAME_HIE_SUM_REPORT2)
+            qb1.generateChildTableQuery(TABLE_NAME_HIE_SUM_REPORT2,2)
 
             # - Get schemas to generate backups & procedures
             print colored( 'Building other schema queries.', 'white')
@@ -902,6 +905,11 @@ class FinalReport:
             fhb1.currentFile.write( STATIC_TABLE_PART_HIE_SUMM_1 )
 
             for i in qb1.childTablesList:
+                fhb1.currentFile.write( i + '\n' )
+
+            fhb1.currentFile.write( '\n' )
+
+            for i in qb1.hieIndexQueries:
                 fhb1.currentFile.write( i + '\n' )
 
             fhb1.currentFile.write( '\n' )
