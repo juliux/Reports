@@ -70,6 +70,9 @@ STATIC_ALERT = "    H A V E   T O   B E  1, 2, 3, 4, 5, 6  OR 7 !"
 CURRENT_PARTITION_QUERY = "SELECT a.currentpart FROM rds$datepart_data a INNER JOIN rds$datepartitioning b on b.id = a.id WHERE b.tablename = 'report$reservation';"
 CURRENT_SCHEMAS_QUERY = "SELECT DISTINCT schemaname FROM pg_catalog.pg_views WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY schemaname;"
 TABLE_NAME_EOD_SUM_REPORT = "reporting$eod_trans_sum_table_p"
+TABLE_NAME_EOD_SUM_REPORT2 = "reporting$eod_trans_sum_table"
+TABLE_NAME_HIE_SUM_REPORT = "reporting$accountholder_hierarchy_sum_table_p"
+TABLE_NAME_HIE_SUM_REPORT2 = "reporting$accountholder_hierarchy_sum_table"
 
 # - EOD Table stacking
 
@@ -355,9 +358,19 @@ ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p34" OWNER TO "RDS";
 ALTER TABLE "reporting$accountholder_hierarchy_sum_table_p35" OWNER TO "RDS";
 """
 
+STATIC_GRANTS_FOR_NEW_OBJECTS_4 = """ALTER FUNCTION "RDS"."accountholder_hierarchy_sum_insert"(date,date) OWNER TO postgres;
+GRANT ALL ON FUNCTION "RDS"."accountholder_hierarchy_sum_insert"(date,date) TO "RDS";
+"""
+
 STATIC_EOD_ROLLBACK_OBJECT_1 = """DROP TABLE reporting$eod_trans_sum_table CASCADE;
 DROP FUNCTION reporting$eod_trans_sum_insert_function();
 DROP FUNCTION end_of_day_transaction_summary_insert(date,date);
+
+"""
+
+STATIC_HID_ROLLBACK_OBJECT_1 = """DROP TABLE reporting$accountholder_hierarchy_sum_table CASCADE;
+DROP FUNCTION reporting$accountholder_hierarchy_sum_insert_function();
+DROP FUNCTION accountholder_hierarchy_sum_insert(date,date);
 
 """
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
@@ -539,13 +552,18 @@ class QueryBuilder:
     eodMaintenanceQueries = []
     eodMaintenanceConsolidationList = []
 
-    def addTuple(self,myTuple):
+    def addTuple(self,myTuple,index):
         self.finalQueryList.append(myTuple) 
         # - Tuple Generation
         table, inicio, fin = myTuple
-        currentPartition = table[31:32]
-        currentTable = table[0:31]
-        iteration = int(table[31:32]) + 1
+        if index == 1: # - EOD
+            currentPartition = table[31:33]
+            currentTable = table[0:31]
+            iteration = int(table[31:33]) + 1
+        elif index == 2: # - HIE
+            currentPartition = table[45:47]
+            currentTable = table[0:45]
+            iteration = int(table[45:47]) + 1
         while currentPartition != iteration: 
             # - Time Control
             newTupleElementFin = inicio
@@ -563,12 +581,12 @@ class QueryBuilder:
             self.finalQueryList.append(finalTempTuple)
             table, inicio, fin = finalTempTuple
     
-    def generateChildTableQuery(self):
+    def generateChildTableQuery(self,fatherTable):
         # - Tuple Processing
         firstOne = True
         for processTuple in self.finalQueryList:
             table, inicio, fin = processTuple
-            self.childTablesList.append('CREATE TABLE "%s" ( CONSTRAINT "%s_check" CHECK (((end_date >= \'%s\' ) AND (end_date < \'%s\' )))) INHERITS ("reporting$eod_trans_sum_table");' % ( table, table, inicio, fin ) )
+            self.childTablesList.append('CREATE TABLE "%s" ( CONSTRAINT "%s_check" CHECK (((end_date >= \'%s\' ) AND (end_date < \'%s\' )))) INHERITS ("%s");' % ( table, table, inicio, fin, fatherTable ) )
             if firstOne:
                 self.functionProcedureList.append('  IF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);' % ( inicio, fin, table ) )
                 firstOne = False
@@ -599,19 +617,29 @@ class QueryBuilder:
         tempString = tempString + STATIC_TABLE_PART_EOD_SUMM_3         
         self.eodMaintenanceConsolidationList.append(tempString)
 
-    def buildShemaQueries(self):
+    def buildShemaQueries(self,index):
         # - Build queries for schemas
         for i in self.schemasList:
-            self.schemasQueries.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date, date) RENAME TO example$end_of_day_transaction_summary_orig;' % ( i ) + '\n' )
-            self.schemasQueries.append( 'CREATE OR REPLACE FUNCTION "%s"."example$end_of_day_transaction_summary"(starttime date, endtime date)' % ( i ) + '\n' + STATIC_NEW_EOD_FUNCTION_GENERAL )
-            self.schemasQueriesGrants.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;\n' % ( i ) )
-            self.schemasQueriesGrants.append( 'GRANT ALL ON FUNCTION "%s"."example$end_of_day_transaction_summary"(date,date) TO "RDS";\n' % ( i ) )
+            if index == 1: # - EOD
+                self.schemasQueries.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date, date) RENAME TO example$end_of_day_transaction_summary_orig;\n' % ( i ) )
+                self.schemasQueries.append( 'CREATE OR REPLACE FUNCTION "%s"."example$end_of_day_transaction_summary"(starttime date, endtime date)\n' % ( i ) + STATIC_NEW_EOD_FUNCTION_GENERAL )
+                self.schemasQueriesGrants.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary"(date,date) OWNER TO postgres;\n' % ( i ) )
+                self.schemasQueriesGrants.append( 'GRANT ALL ON FUNCTION "%s"."example$end_of_day_transaction_summary"(date,date) TO "RDS";\n' % ( i ) )
+            elif index == 2: # - HIE
+                self.schemasQueries.append( 'ALTER FUNCTION "%s"."example$accountholder_hierarchy_transaction_summary"(date, date) RENAME TO example$accountholder_hierarchy_transaction_summary_orig;\n' % ( i ) )
+                self.schemasQueries.append( 'CREATE OR REPLACE FUNCTION "%s"."example$accountholder_hierarchy_transaction_summary"(starttime date, endtime date)\n' % ( i ) + STATIC_NEW_HIE_FUNCTION_GENERAL )
+                self.schemasQueriesGrants.append( 'ALTER FUNCTION "%s"."example$accountholder_hierarchy_transaction_summary"(date,date) OWNER TO postgres;\n' % ( i ) )
+                self.schemasQueriesGrants.append( 'GRANT ALL ON FUNCTION "%s"."example$accountholder_hierarchy_transaction_summary"(date,date) TO "RDS";\n' % ( i ) )
 
-    def buildShemaQueriesRollback(self):
+    def buildShemaQueriesRollback(self,index):
         # - Build queries for Rollbacks using schemas
         for i in self.schemasList:
-            self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$end_of_day_transaction_summary(date,date);' % ( i ) )
-            self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary_orig"(date, date) RENAME TO example$end_of_day_transaction_summary;' % ( i ) )
+            if index == 1: 
+                self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$end_of_day_transaction_summary(date,date);' % ( i ) )
+                self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$end_of_day_transaction_summary_orig"(date, date) RENAME TO example$end_of_day_transaction_summary;' % ( i ) )
+            elif index == 2:
+                self.schemasQueriesRollback.append( 'DROP FUNCTION "%s".example$accountholder_hierarchy_transaction_summary(date,date);' % ( i ) )
+                self.schemasQueriesRollback.append( 'ALTER FUNCTION "%s"."example$accountholder_hierarchy_transaction_summary_orig"(date, date) RENAME TO example$accountholder_hierarchy_transaction_summary;' % ( i ) )
 
     def buildAggregationTableQueries(self):
         for i in qb1.finalQueryList:
@@ -620,17 +648,26 @@ class QueryBuilder:
             myTempTuple = ( startDate, endDate, tempString )
             self.monthWithDataQueries.append( myTempTuple )
 
-    def generaDataQueries(self, myDateList):
+    def generaDataQueries(self, myDateList, index):
         for i in myDateList:
-            myTempQuery = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( i, i )
+            if index == 1:# - EOD
+                myTempQuery = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( i, i )
+            elif index == 2:# - HIE
+                myTempQuery = 'SELECT "RDS".accountholder_hierarchy_sum_insert(\'%s\',\'%s\');' % ( i, i )
             self.finalDataInsertQueries.append( myTempQuery )
 
-    def generateMaintenanceQueriesEOD(self):
+    def generateMaintenanceQueriesEOD(self,index):
         YESTERDAY = ( datetime.today() - timedelta(1) ).strftime('%Y-%m-%d')
-        tempString = 'SELECT COUNT(*) FROM reporting$eod_trans_sum_table WHERE start_date = \'%s\';' % ( YESTERDAY )
-        self.eodMaintenanceQueries.append(tempString)
-        tempString2 = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( YESTERDAY, YESTERDAY )
-        self.eodMaintenanceQueries.append(tempString2)
+        if index == 1:
+            tempString = 'SELECT COUNT(*) FROM reporting$eod_trans_sum_table WHERE start_date = \'%s\';' % ( YESTERDAY )
+            self.eodMaintenanceQueries.append(tempString)
+            tempString2 = 'SELECT "RDS".end_of_day_transaction_summary_insert(\'%s\',\'%s\');' % ( YESTERDAY, YESTERDAY )
+            self.eodMaintenanceQueries.append(tempString2)
+        elif index == 2:
+            tempString = 'SELECT COUNT(*) FROM reporting$accountholder_hierarchy_sum_table WHERE start_date = \'%s\';' % ( YESTERDAY )
+            self.eodMaintenanceQueries.append(tempString)
+            tempString2 = 'SELECT "RDS".accountholder_hierarchy_sum_insert(\'%s\',\'%s\');' % ( YESTERDAY, YESTERDAY )
+            self.eodMaintenanceQueries.append(tempString2)
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -691,21 +728,21 @@ class FinalReport:
             print colored( STATIC_DOTTED_LINE , 'yellow')
             print( EMPTY_SPACE )
             qb1 = QueryBuilder()
-            qb1.addTuple( pb1.partitionTuple )
+            qb1.addTuple( pb1.partitionTuple,1 )
 
             # - Generate child tables detail
             print colored( 'Generating Child Tables queries.', 'white')
             print colored( STATIC_DOTTED_LINE , 'yellow')
             print( EMPTY_SPACE )
-            qb1.generateChildTableQuery()
+            qb1.generateChildTableQuery(TABLE_NAME_EOD_SUM_REPORT2)
 
             # - Get schemas to generate backups & procedures
-            print colored( 'Building other schema quieres.', 'white')
+            print colored( 'Building other schema queries.', 'white')
             print colored( STATIC_DOTTED_LINE , 'yellow')
             print( EMPTY_SPACE )
             db1.queryRDS(CURRENT_SCHEMAS_QUERY)
             qb1.schemasList = db1.resultQueryClean
-            qb1.buildShemaQueries()
+            qb1.buildShemaQueries(1)
 
             # - Generate queries for aggregated tables.
             #qb1.finalQueryList
@@ -725,7 +762,7 @@ class FinalReport:
             print( EMPTY_SPACE )
             os1.myProgressBar.finish()
             pb1.generaDateQueries(qb1.dataFoundDates)
-            qb1.generaDataQueries(pb1.finalDatesDataPopulation)
+            qb1.generaDataQueries(pb1.finalDatesDataPopulation,1)
 
             print colored( 'Dumping files with the queries.', 'white')
             print colored( STATIC_DOTTED_LINE , 'yellow')
@@ -770,9 +807,124 @@ class FinalReport:
             fhb2.closeMyFile()
             fhb3.closeMyFile()
 
-            os.rename( fhb1.currentQueryFileName, 'query.RDS.sql' )
-            os.rename( fhb2.currentQueryFileName, 'query.postgres.sql' )
-            os.rename( fhb3.currentQueryFileName, 'query.inserts.sql' )
+            os.rename( fhb1.currentQueryFileName, 'query.RDS.EOD.sql' )
+            os.rename( fhb2.currentQueryFileName, 'query.postgres.EOD.sql' )
+            os.rename( fhb3.currentQueryFileName, 'query.inserts.EOD.sql' )
+
+    def generateHIEReport(self,db1,pb1,qb1,fhb1,fhb2,fhb3):
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+        print( EMPTY_SPACE )
+        print colored( 'Open DB connection.', 'white')
+        print colored( STATIC_DOTTED_LINE , 'yellow')
+        print( EMPTY_SPACE )
+
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            os1.elegantExit()
+        else:
+            # - End of day report    
+            # - Getting last partition
+            print colored( 'Getting current partition.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            db1.queryRDS(CURRENT_PARTITION_QUERY)
+            pb1 = PartitionBox()
+            pb1.partition = db1.resultQuery
+            pb1.stackPartition(TABLE_NAME_HIE_SUM_REPORT)
+            pb1.addTuple()
+
+            # - Generate tuples in the list
+            print colored( 'Generating tuples for queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            qb1 = QueryBuilder()
+            qb1.addTuple( pb1.partitionTuple,2 )
+
+            # - Generate child tables detail
+            print colored( 'Generating Child Tables queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            qb1.generateChildTableQuery(TABLE_NAME_HIE_SUM_REPORT2)
+
+            # - Get schemas to generate backups & procedures
+            print colored( 'Building other schema queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            db1.queryRDS(CURRENT_SCHEMAS_QUERY)
+            qb1.schemasList = db1.resultQueryClean
+            qb1.buildShemaQueries(2)
+
+            # - Generate queries for aggregated tables.
+            #qb1.finalQueryList
+            qb1.buildAggregationTableQueries()
+            print colored( STATIC_BANNER_SEARCHING_DATA , 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            os1.progressBarPrint( 'Searching Data Per Month:', len(qb1.monthWithDataQueries) )
+            for i in qb1.monthWithDataQueries:
+                tempStartDate , tempEndDate, tempQuery = i
+                db1.queryRDS( tempQuery )
+                if db1.resultQuery[0][0] != 0:
+                    tempTupleGenerated = ( tempStartDate, tempEndDate )
+                    qb1.dataFoundDates.append( tempTupleGenerated )
+                os1.myProgressBar.next()
+
+            print( EMPTY_SPACE )
+            os1.myProgressBar.finish()
+            pb1.generaDateQueries(qb1.dataFoundDates)
+            qb1.generaDataQueries(pb1.finalDatesDataPopulation,2)
+
+            print colored( 'Dumping files with the queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+
+            fhb1 = FileHandlerBox()
+            fhb1.touchOrOpenMyFile()
+            fhb1.currentFile.write( STATIC_TABLE_PART_HIE_SUMM_1 )
+
+            for i in qb1.childTablesList:
+                fhb1.currentFile.write( i + '\n' )
+
+            fhb1.currentFile.write( '\n' )
+            fhb1.currentFile.write( STATIC_TABLE_PART_HIE_SUMM_2 )
+
+            for i in qb1.functionProcedureList:
+                fhb1.currentFile.write( i + '\n' )
+
+            fhb1.currentFile.write( STATIC_TABLE_PART_HIE_SUMM_3 )
+            fhb1.currentFile.write( STATIC_TABLE_PART_HIE_SUMM_4 )
+            fhb1.currentFile.write( STATIC_FUNCTION_INSERT_2 )
+            fhb1.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_3 )
+
+            fhb2 = FileHandlerBox()
+            fhb2.touchOrOpenMyFile()
+
+            for i in qb1.schemasQueries:
+                fhb2.currentFile.write( i + '\n' )
+
+            fhb2.currentFile.write( STATIC_GRANTS_FOR_NEW_OBJECTS_4 )
+
+            for i in qb1.schemasQueriesGrants:
+                fhb2.currentFile.write( i )
+
+            fhb3 = FileHandlerBox()
+            fhb3.touchOrOpenMyFile()
+
+            for i in qb1.finalDataInsertQueries:
+                fhb3.currentFile.write( i + '\n' )
+
+            fhb1.closeMyFile()
+            fhb2.closeMyFile()
+            fhb3.closeMyFile()
+
+            os.rename( fhb1.currentQueryFileName, 'query.RDS.HIE.sql' )
+            os.rename( fhb2.currentQueryFileName, 'query.postgres.HIE.sql' )
+            os.rename( fhb3.currentQueryFileName, 'query.inserts.HIE.sql' )
 
     def generateEODReportRollback(self,db1,fhb4,fhb5):
         # - Open connection
@@ -797,7 +949,7 @@ class FinalReport:
             print( EMPTY_SPACE )
             db1.queryRDS(CURRENT_SCHEMAS_QUERY)
             qb1.schemasList = db1.resultQueryClean
-            qb1.buildShemaQueriesRollback()
+            qb1.buildShemaQueriesRollback(1)
 
             print colored( 'Dumping files with the queries.', 'white')
             print colored( STATIC_DOTTED_LINE , 'yellow')
@@ -816,8 +968,53 @@ class FinalReport:
             fhb4.closeMyFile()
             fhb5.closeMyFile()
 
-            os.rename( fhb4.currentQueryFileName, 'query.RDS.Rollback.sql' )
-            os.rename( fhb5.currentQueryFileName, 'query.postgres.Rollback.sql' )
+            os.rename( fhb4.currentQueryFileName, 'query.RDS.Rollback.EOD.sql' )
+            os.rename( fhb5.currentQueryFileName, 'query.postgres.Rollback.EOD.sql' )
+
+    def generateHIDReportRollback(self,db1,fhb4,fhb5):
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+        print( EMPTY_SPACE )
+        print colored( 'Open DB connection.', 'white')
+        print colored( STATIC_DOTTED_LINE , 'yellow')
+        print( EMPTY_SPACE )
+
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            print colored( 'Exiting because connection None, Elegant Exit Called.', 'red')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            os1.elegantExit()
+        else:
+            # - End of day report rollback   
+            # - Get schemas to generate rollback queries
+            print colored( 'Building rollback schema queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+            db1.queryRDS(CURRENT_SCHEMAS_QUERY)
+            qb1.schemasList = db1.resultQueryClean
+            qb1.buildShemaQueriesRollback(2)
+
+            print colored( 'Dumping files with the queries.', 'white')
+            print colored( STATIC_DOTTED_LINE , 'yellow')
+            print( EMPTY_SPACE )
+
+            fhb4 = FileHandlerBox()
+            fhb4.touchOrOpenMyFile()
+            fhb5 = FileHandlerBox()
+            fhb5.touchOrOpenMyFile()
+
+            fhb4.currentFile.write( STATIC_HID_ROLLBACK_OBJECT_1 )
+
+            for i in qb1.schemasQueriesRollback:
+                fhb5.currentFile.write( i + '\n' )
+
+            fhb4.closeMyFile()
+            fhb5.closeMyFile()
+
+            os.rename( fhb4.currentQueryFileName, 'query.RDS.Rollback.HID.sql' )
+            os.rename( fhb5.currentQueryFileName, 'query.postgres.Rollback.HID.sql' )
 
     def eodMaintenance(self,db1,qb1):
         # - Open connection
@@ -828,7 +1025,7 @@ class FinalReport:
             os1.elegantExit()
         else:
             # - Get schemas to generate rollback queries
-            qb1.generateMaintenanceQueriesEOD()
+            qb1.generateMaintenanceQueriesEOD(1)
             countQuery, insertQuery = qb1.eodMaintenanceQueries
             db1.queryRDS(countQuery)
             if db1.resultQuery[0][0] == 0:
@@ -839,11 +1036,39 @@ class FinalReport:
                          botLogger.error("INSERT process completed.")
                          os1.elegantExit()
                      else:
-                         botLogger.error("Error executing count validation after INSERT.")
+                         botLogger.error("EOD: Error executing count validation after INSERT.")
                  else:
-                     botLogger.error("Error executing INSERT procedure, check if effective data is present in rds$reservation tables.")
+                     botLogger.error("EOD: Error executing INSERT procedure, check if effective data is present in rds$reservation tables.")
             else:
-                botLogger.error("Error, trigger not executed because current date present in the system")
+                botLogger.error("EOD: Error, trigger not executed because current date present in the system")
+
+    def hidMaintenance(self,db1,qb1):
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            os1.elegantExit()
+        else:
+            # - Get schemas to generate rollback queries
+            qb1.generateMaintenanceQueriesEOD(2)
+            countQuery, insertQuery = qb1.eodMaintenanceQueries
+            print( countQuery )
+            print( insertQuery )
+            db1.queryRDS(countQuery)
+            if db1.resultQuery[0][0] == 0:
+                 db1.queryRDS(insertQuery)
+                 if db1.resultQuery[0][0] == 1:
+                     db1.queryRDS(countQuery)
+                     if db1.resultQuery[0][0] != 0:
+                         botLogger.error("INSERT process completed.")
+                         os1.elegantExit()
+                     else:
+                         botLogger.error("HID: Error executing count validation after INSERT.")
+                 else:
+                     botLogger.error("HID: Error executing INSERT procedure, check if effective data is present in rds$reservation tables.")
+            else:
+                botLogger.error("HID: Error, trigger not executed because current date present in the system")
 
     def eodMaintenanceMontly(self,db1,pb1,qb1,fhb1):
         tempList = []
@@ -866,7 +1091,53 @@ class FinalReport:
             pb1.addTuple()
             # - Generate tuples in the list
             qb1 = QueryBuilder()
-            qb1.addTuple( pb1.partitionTuple )
+            qb1.addTuple( pb1.partitionTuple,1 )
+
+            # - Generate final query array
+            qb1.generateChildTableQueryEODM()
+            qb1.consolidateEODM()
+
+            #fhb1 = FileHandlerBox()
+            #fhb1.touchOrOpenMyFile()
+
+            #for i in qb1.eodMaintenanceConsolidationList:
+            #    fhb1.currentFile.write(i)
+
+            #fhb1.closeMyFile()
+            #db1.closeConnection(botLogger)
+
+            #db2 = DBbox('RDS',db1.passwd,'RDS',5432)
+            #db2.openConnection(botLogger)
+            if db1.conexion is None:
+                botLogger.error("Exiting because connection None, Elegant Exit Called")
+                os1.elegantExit()
+            else:
+                for manQuery in qb1.eodMaintenanceConsolidationList:
+                    db1.queryRDS(manQuery)
+                db1.closeConnection(botLogger)
+
+    def hidMaintenanceMontly(self,db1,pb1,qb1,fhb1):
+        tempList = []
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            os1.elegantExit()
+        else:
+            # - Getting last partition
+            db1.queryRDS(CURRENT_PARTITION_QUERY)
+            pb1 = PartitionBox()
+            pb1.partition = db1.resultQuery
+            pb1.nextPartition = int(pb1.partition[0][0]) + 1
+            if pb1.nextPartition > 35:
+                pb1.nextPartition = 0
+            pb1.stackPartitionEODMontly(TABLE_NAME_EOD_SUM_REPORT)
+            pb1.addTuple()
+            # - Generate tuples in the list
+            qb1 = QueryBuilder()
+            qb1.addTuple( pb1.partitionTuple,1 )
 
             # - Generate final query array
             qb1.generateChildTableQueryEODM()
@@ -959,17 +1230,16 @@ if len(os1.parametersList) != 1:
                 myReportBox.generateEODReport(db1,pb1,qb1,fhb1,fhb2,fhb3)
             elif os1.whichReport == 'agentHierarchyReport':
                 # - Agent Hierarchy report
-                print( 'Agent Hierarchy report' )
+                myReportBox.generateHIEReport(db1,pb1,qb1,fhb1,fhb2,fhb3)
             elif os1.whichReport == 'serviceProviderTransReport':
                 # - Service Provider report
                 print( 'Service Provider report' )
             elif os1.whichReport == 'generateEODReportRollback':
                 # - Service Provider report
-                #print( 'EOD report Rollback' )
                 myReportBox.generateEODReportRollback(db1,fhb4,fhb5)
             elif os1.whichReport == 'agentHierarchyReportRollback':
                 # - Service Provider report
-                print( 'Agent Hierarchy report Rollback' )
+                myReportBox.generateHIDReportRollback(db1,fhb4,fhb5)
             elif os1.whichReport == 'serviceProviderTransReportRollback':
                 # - Service Provider report
                 print( 'Service Provider report Rollback' )
@@ -980,7 +1250,7 @@ if len(os1.parametersList) != 1:
                 myReportBox.eodMaintenance(db1,qb1)
             elif os1.whichReport == 'HierarchyReport':
                 # - Agent Hierarchy report
-                print( 'Maintenance for Agent Hierarchy Report' )
+                myReportBox.hidMaintenance(db1,qb1)
             elif os1.whichReport == 'SPTransReport':
                 # - Service Provider report
                 print( 'Maintenance for Service Provider report' )
@@ -1046,7 +1316,7 @@ else:
         myReportBox.generateEODReport(db1,pb1,qb1,fhb1,fhb2,fhb3)
     elif os1.rawKeyboard == '2':
         # - Agent Hierarchy report
-        print( 'Agent Hierarchy report' )
+        myReportBox.generateHIEReport(db1,pb1,qb1,fhb1,fhb2,fhb3)
     elif os1.rawKeyboard == '3':
         # - Service Provider report
         print( 'Service Provider report' )
@@ -1056,7 +1326,7 @@ else:
         myReportBox.generateEODReportRollback(db1,fhb4,fhb5)
     elif os1.rawKeyboard == '5':
         # - agentHierarchyReport Rollback
-        print( 'Agent Hierarchy report Rollback' )
+        myReportBox.generateHIDReportRollback(db1,fhb4,fhb5)
     elif os1.rawKeyboard == '6':
         # - Service Provider report Rollback
         print( 'Service Provider report Rollback' )
