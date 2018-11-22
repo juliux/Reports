@@ -608,13 +608,27 @@ class QueryBuilder:
             else:
                 self.functionProcedureList.append('  ELSEIF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);\n' % ( inicio, fin, table ) )
 
-    def consolidateEODM(self):
+    def consolidateEODM(self,index):
+        #for i in self.childTablesList:
+        #    self.eodMaintenanceConsolidationList.append(i)
+        #tempString = STATIC_TABLE_PART_EOD_SUMM_2
+        #for j in self.functionProcedureList:
+        #    tempString = tempString + j
+        #tempString = tempString + STATIC_TABLE_PART_EOD_SUMM_3         
+        #self.eodMaintenanceConsolidationList.append(tempString)
         for i in self.childTablesList:
             self.eodMaintenanceConsolidationList.append(i)
-        tempString = STATIC_TABLE_PART_EOD_SUMM_2
+        if index == 1:
+            tempString = STATIC_TABLE_PART_EOD_SUMM_2
+        elif index == 2:
+            tempString = STATIC_TABLE_PART_HIE_SUMM_2
+
         for j in self.functionProcedureList:
             tempString = tempString + j
-        tempString = tempString + STATIC_TABLE_PART_EOD_SUMM_3         
+        if index == 1:
+            tempString = tempString + STATIC_TABLE_PART_EOD_SUMM_3
+        elif index == 2:
+            tempString = tempString + STATIC_TABLE_PART_HIE_SUMM_3
         self.eodMaintenanceConsolidationList.append(tempString)
 
     def buildShemaQueries(self,index):
@@ -1053,8 +1067,6 @@ class FinalReport:
             # - Get schemas to generate rollback queries
             qb1.generateMaintenanceQueriesEOD(2)
             countQuery, insertQuery = qb1.eodMaintenanceQueries
-            print( countQuery )
-            print( insertQuery )
             db1.queryRDS(countQuery)
             if db1.resultQuery[0][0] == 0:
                  db1.queryRDS(insertQuery)
@@ -1095,11 +1107,10 @@ class FinalReport:
 
             # - Generate final query array
             qb1.generateChildTableQueryEODM()
-            qb1.consolidateEODM()
+            qb1.consolidateEODM(1)
 
             #fhb1 = FileHandlerBox()
             #fhb1.touchOrOpenMyFile()
-
             #for i in qb1.eodMaintenanceConsolidationList:
             #    fhb1.currentFile.write(i)
 
@@ -1133,15 +1144,15 @@ class FinalReport:
             pb1.nextPartition = int(pb1.partition[0][0]) + 1
             if pb1.nextPartition > 35:
                 pb1.nextPartition = 0
-            pb1.stackPartitionEODMontly(TABLE_NAME_EOD_SUM_REPORT)
+            pb1.stackPartitionEODMontly(TABLE_NAME_HIE_SUM_REPORT)
             pb1.addTuple()
             # - Generate tuples in the list
             qb1 = QueryBuilder()
-            qb1.addTuple( pb1.partitionTuple,1 )
+            qb1.addTuple( pb1.partitionTuple,2 )
 
             # - Generate final query array
             qb1.generateChildTableQueryEODM()
-            qb1.consolidateEODM()
+            qb1.consolidateEODM(2)
 
             #fhb1 = FileHandlerBox()
             #fhb1.touchOrOpenMyFile()
@@ -1259,7 +1270,7 @@ if len(os1.parametersList) != 1:
                 myReportBox.eodMaintenanceMontly(db1,pb1,qb1,fhb1)
             elif os1.whichReport == 'HierarchyReportM':
                 # - Hierarchy Report Montly Maintenance
-                print( 'Montly Maintenance for Hierarchy Report' )
+                myReportBox.hidMaintenanceMontly(db1,pb1,qb1,fhb1)
             elif os1.whichReport == 'SPTransReportM':
                 # - SP Montly Maintenance
                 print( 'Montly Maintenance for SP Transaction Report' )
