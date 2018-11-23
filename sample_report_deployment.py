@@ -711,7 +711,7 @@ class FileHandlerBox:
 
 class FinalReport:
 
-    myVersion = "Current Version is : 3.0 - support for EOD & HIE report - Rollbak - Daily & Montly Maintenance routines."
+    myVersion = "Current Version is : 3.0 - support for EOD & HIE report - Rollback - Daily & Montly Maintenance routines."
 
     def generateEODReport(self,db1,pb1,qb1,fhb1,fhb2,fhb3):
         # - Open connection
