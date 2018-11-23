@@ -154,7 +154,7 @@ CREATE TRIGGER "reporting$accountholder_hierarchy_sum_table_trigger" BEFORE INSE
 STATIC_FUNCTION_INSERT = """CREATE OR REPLACE FUNCTION "end_of_day_transaction_summary_insert"(starttime date, endtime date) RETURNS VOID
   LANGUAGE SQL
   AS $_$
-    INSERT INTO reporting$eod_trans_sum_table
+    INSERT INTO "RDS".reporting$eod_trans_sum_table
     ( insert_date,start_date,end_date,operation,total_count,currency,total_amount,total_fees,total_discounts,total_promotions,total_coupons,additional_info )
     (
       select
@@ -186,13 +186,13 @@ STATIC_FUNCTION_INSERT = """CREATE OR REPLACE FUNCTION "end_of_day_transaction_s
 STATIC_FUNCTION_INSERT_2 = """CREATE OR REPLACE FUNCTION "accountholder_hierarchy_sum_insert"(starttime date, endtime date) RETURNS VOID
   LANGUAGE SQL
   AS $_$
-    INSERT INTO reporting$accountholder_hierarchy_sum_table
+    INSERT INTO "RDS".reporting$accountholder_hierarchy_sum_table
     ( insert_date, start_date, end_date, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, currency, count, sum, operation )
     (     
       (select
         now()::date              as insert_date,
-        createdtime              as start_date,
-        finalizedtime            as end_date,
+        createdtime::date        as start_date,
+        finalizedtime::date      as end_date,
         fromfrol1parentid        as frol1parentid,
         fromfrol1parentfirstname as frol1parentfirstname,
         fromfrol1parentlastname  as frol1parentlastname,
@@ -205,13 +205,13 @@ STATIC_FUNCTION_INSERT_2 = """CREATE OR REPLACE FUNCTION "accountholder_hierarch
         operationtype            as operation
       from "global".committed_financialevent(starttime, endtime)
       where operationtype in ('CASH_IN', 'PAYMENT', 'BATCH_TRANSFER', 'CREATE_CASH_VOUCHER') and fromfrol2parentid is not null
-      group by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
-      order by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)
+      group by createdtime::date, finalizedtime::date, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
+      order by createdtime::date, finalizedtime::date, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)
       union all
       (select
         now()::date              as insert_date,
-        createdtime              as start_date,
-        finalizedtime            as end_date,
+        createdtime::date        as start_date,
+        finalizedtime::date      as end_date,
         tofrol1parentid          as frol1parentid,
         tofrol1parentfirstname   as frol1parentfirstname,
         tofrol1parentlastname    as frol1parentlastname,
@@ -224,8 +224,8 @@ STATIC_FUNCTION_INSERT_2 = """CREATE OR REPLACE FUNCTION "accountholder_hierarch
         operationtype            as operation
       from "global".committed_financialevent(starttime, endtime)
       where operationtype in ('CASH_OUT', 'TRANSFER_FROM_VOUCHER', 'REDEEM_CASH_VOUCHER') and tofrol2parentid is not null
-      group by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
-      order by createdtime, finalizedtime, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)      
+      group by createdtime::date, finalizedtime::date, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency
+      order by createdtime::date, finalizedtime::date, frol1parentid, frol1parentfirstname, frol1parentlastname, frol2parentid, frol2parentfirstname, frol2parentlastname, operation, currency)      
     );
   $_$;
 
