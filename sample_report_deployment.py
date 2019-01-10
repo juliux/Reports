@@ -48,7 +48,8 @@ Example:
 Example:
 ./sample_report_deployment.py maintenance ABc123456 EODReport
 
-Maintenance Functions are: EODReport | HierarchyReport | SPTransReport | EODReportM | HierarchyReportM | SPTransReportM
+Maintenance Functions are: EODReport | HierarchyReport | SPTransReport | EODReportM | HierarchyReportM | SPTransReportM | SessionCleanUp
+
 """
 STATIC_MENU_BANNER = """Select your report:
 
@@ -519,6 +520,10 @@ DROP FUNCTION service_provider_transaction_insert(date,date,text);
 
 """
 
+# - Maintenance class
+
+KILL_OLDER_SESSIONS = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'RDS' AND pid <> pg_backend_pid() AND state = 'idle' AND usename = 'RDS' AND state_change < current_timestamp - INTERVAL '11' MINUTE;"
+
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
 # |C|L|A|S|S| |D|E|F|I|N|I|T|I|O|N|
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
@@ -534,7 +539,7 @@ class OsAgent:
     myselfScript = ""
     rawKeyboard = ""
     validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport','generateEODReportRollback','agentHierarchyReportRollback','serviceProviderTransReportRollback']
-    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport','EODReportM','HierarchyReportM','SPTransReportM']
+    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport','EODReportM','HierarchyReportM','SPTransReportM','SessionCleanUp']
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -577,6 +582,7 @@ class DBbox:
     
     user = "RDS"
     passwd = "ABc123456"
+    adminPasswd = "ABc123456"
     database = "RDS"
     port = "5432"
     conexion = None
@@ -886,7 +892,7 @@ class FileHandlerBox:
 
 class FinalReport:
 
-    myVersion = "Current Version is : 4.0 - support for EOD, HIE & SP reports - Rollback - Daily & Montly Maintenance routines."
+    myVersion = "Current Version is : 5.0 - support for EOD, HIE & SP reports - Rollback - Daily & Montly Maintenance routines + Old DB session removal."
 
     def generateEODReport(self,db1,pb1,qb1,fhb1,fhb2,fhb3):
         # - Open connection
@@ -1606,6 +1612,40 @@ class FinalReport:
         print colored(FinalReport.myVersion, 'green')
         print colored( STATIC_DOTTED_LINE, 'yellow')
 
+class DBMaintenance:
+
+    myClosedSessionsString = "" 
+     
+    def cleanUpSessions(self,db1,fhb1):
+
+        # - Open connection
+        db1 = DBbox('RDS',db1.passwd,'RDS',5432)
+        db1.openConnection(botLogger)
+
+        if db1.conexion is None:
+            botLogger.error("Exiting because connection None, Elegant Exit Called")
+            os1.elegantExit()
+        else:
+            # - Getting last partition
+            db1.queryRDS(KILL_OLDER_SESSIONS)
+            self.myClosedSessionsString = str(len( db1.resultQuery ))
+
+            #fhb1 = FileHandlerBox()
+            #fhb1.touchOrOpenMyFile()
+
+            myTempString = 'Total of sessions closed: %s at %s' % ( self.myClosedSessionsString, datetime.now() )
+
+            #fhb1.currentFile.write(myTempString)
+            #fhb1.closeMyFile()
+
+            botLogger.error(myTempString)
+
+            if db1.conexion is None:
+                botLogger.error("Exiting because connection None, Elegant Exit Called")
+                os1.elegantExit()
+            else:
+                db1.closeConnection(botLogger)
+
 # +-+-+-+-+-+-+-+-+-+-+ +-+-+-+-+-+
 # |D|E|P|L|O|Y|M|E|N|T| |L|O|G|I|C|
 # +-+-+-+-+-+-+-+-+-+-+ +-+-+-+-+-+
@@ -1645,6 +1685,7 @@ if len(os1.parametersList) != 1:
         fhb4 = FileHandlerBox()
         fhb5 = FileHandlerBox()
         myReportBox = FinalReport()
+        myMaintenance = DBMaintenance()
 
         if os1.parametersList[1] == 'nonInteractive' and os1.parametersList[3] in os1.validReports:
             # - Entering non interactive
@@ -1686,6 +1727,9 @@ if len(os1.parametersList) != 1:
             elif os1.whichReport == 'SPTransReportM':
                 # - SP Montly Maintenance
                 myReportBox.spMaintenanceMontly(db1,pb1,qb1,fhb1)
+            elif os1.whichReport == 'SessionCleanUp':
+                # - Cleanup old sessions in RDS DB
+                myMaintenance.cleanUpSessions(db1,fhb1)
         else:
             # - Entering error in syntax
             FinalReport.dropTrashUsage()
