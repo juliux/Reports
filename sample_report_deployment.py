@@ -15,6 +15,7 @@ import calendar
 import logging
 import string
 import time
+import shutil
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -1622,6 +1623,7 @@ class DBMaintenance:
     myPSQL = "/usr/bin/psql"
     dumpName = 'RDS_DUMP'
     dumpPath = '/var/reportingarchive/dumps/'
+    fileManagerPath = '/var/reportingarchive/dumps/out/'
     myPGPassword = ''
 
     def cleanUpSessions(self,db1,fhb1):
@@ -1665,16 +1667,21 @@ class DBMaintenance:
         longString = ') TO \'%s%s\' CSV HEADER;' % (self.dumpPath,finalName)
 	finalQuery = MY_DUMP_STATIC_1 + '\'' + lowLimit + '\'' + ' AND ' + '\'' + highLimit + '\'' + longString
         finalCommand = self.myPSQL + ' -c "' + finalQuery + '" -d RDS -U RDS'
-	print( finalCommand )
+	#print( finalCommand )
 
         self.myPGPassword = os1.parametersList[2]
-        print(self.myPGPassword)
+        #print(self.myPGPassword)
 	# - Export variable
 	os.environ['PGPASSWORD'] = self.myPGPassword
 
 	# - Execute password
 	#try:
         os.system(finalCommand)
+
+        sourceFinalFile = self.dumpPath + finalName
+	destinationFinalFile = self.fileManagerPath + finalName
+
+	shutil.move(sourceFinalFile,destinationFinalFile)
         #except Exception as err:
         #    botLogger.exception("Error executing dump!")
         
