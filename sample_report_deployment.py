@@ -1671,17 +1671,22 @@ class DBMaintenance:
 
         self.myPGPassword = os1.parametersList[2]
         #print(self.myPGPassword)
+	
 	# - Export variable
 	os.environ['PGPASSWORD'] = self.myPGPassword
-
-	# - Execute password
-	#try:
-        os.system(finalCommand)
-
+        
+	# - Setup and check directories
         sourceFinalFile = self.dumpPath + finalName
 	destinationFinalFile = self.fileManagerPath + finalName
-
-	shutil.move(sourceFinalFile,destinationFinalFile)
+	
+	if ( ( os.path.isdir(self.dumpPath) ) and ( os.path.isdir(self.fileManagerPath) ) ):   
+            os.system(finalCommand)
+	    if os.path.exists(sourceFinalFile):
+	        shutil.move(sourceFinalFile,destinationFinalFile)
+	    else:
+	        os1.elegantExit()    
+	else:
+	    os1.elegantExit()
         #except Exception as err:
         #    botLogger.exception("Error executing dump!")
         
