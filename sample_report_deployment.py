@@ -48,7 +48,7 @@ Example:
 Example:
 ./sample_report_deployment.py maintenance ABc123456 EODReport
 
-Maintenance Functions are: EODReport | HierarchyReport | SPTransReport | EODReportM | HierarchyReportM | SPTransReportM | SessionCleanUp
+Maintenance Functions are: EODReport | HierarchyReport | SPTransReport | EODReportM | HierarchyReportM | SPTransReportM | SessionCleanUp | DumpGeneration
 
 """
 STATIC_MENU_BANNER = """Select your report:
@@ -524,6 +524,10 @@ DROP FUNCTION service_provider_transaction_insert(date,date,text);
 
 KILL_OLDER_SESSIONS = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'RDS' AND pid <> pg_backend_pid() AND state = 'idle' AND usename = 'RDS' AND state_change < current_timestamp - INTERVAL '11' MINUTE;"
 
+# - DUMP QUERY
+
+MY_DUMP_STATIC_1 = "\COPY (SELECT * FROM report\$reservation WHERE finalizedtime BETWEEN "
+
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
 # |C|L|A|S|S| |D|E|F|I|N|I|T|I|O|N|
 # +-+-+-+-+-+ +-+-+-+-+-+-+-+-+-+-+
@@ -539,7 +543,7 @@ class OsAgent:
     myselfScript = ""
     rawKeyboard = ""
     validReports = ['generateEODReport','agentHierarchyReport','serviceProviderTransReport','generateEODReportRollback','agentHierarchyReportRollback','serviceProviderTransReportRollback']
-    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport','EODReportM','HierarchyReportM','SPTransReportM','SessionCleanUp']
+    validMaintenanceFunctions = ['EODReport','HierarchyReport','SPTransReport','EODReportM','HierarchyReportM','SPTransReportM','SessionCleanUp','DumpGeneration']
    
     def __init__(self, commando, token):
         self.commando = commando
@@ -892,7 +896,7 @@ class FileHandlerBox:
 
 class FinalReport:
 
-    myVersion = "Current Version is : 5.0 - support for EOD, HIE & SP reports - Rollback - Daily & Montly Maintenance routines + Old DB session removal."
+    myVersion = "Current Version is : 6.0 - support for EOD, HIE & SP reports - Rollback - Daily & Montly Maintenance routines + Old DB session removal and dump generation."
 
     def generateEODReport(self,db1,pb1,qb1,fhb1,fhb2,fhb3):
         # - Open connection
@@ -1615,7 +1619,11 @@ class FinalReport:
 class DBMaintenance:
 
     myClosedSessionsString = "" 
-     
+    myPSQL = "/usr/bin/psql"
+    dumpName = 'RDS_DUMP'
+    dumpPath = '/var/reportingarchive/dumps/'
+    myPGPassword = ''
+
     def cleanUpSessions(self,db1,fhb1):
 
         # - Open connection
@@ -1646,6 +1654,30 @@ class DBMaintenance:
             else:
                 db1.closeConnection(botLogger)
 
+    def reportReservationDump(self):
+	
+	# - Generate command
+	yesterday = datetime.today() - timedelta(1)
+        officialDate = yesterday.strftime('%Y-%m-%d')
+	finalName = self.dumpName + '_' + yesterday.strftime('%Y%m%d') + '.dmp'
+	lowLimit = officialDate + ' 00:00:00.000'
+	highLimit = officialDate + ' 23:59:59.999'
+        longString = ') TO \'%s%s\' CSV HEADER;' % (self.dumpPath,finalName)
+	finalQuery = MY_DUMP_STATIC_1 + '\'' + lowLimit + '\'' + ' AND ' + '\'' + highLimit + '\'' + longString
+        finalCommand = self.myPSQL + ' -c "' + finalQuery + '" -d RDS -U RDS'
+	print( finalCommand )
+
+        self.myPGPassword = os1.parametersList[2]
+        print(self.myPGPassword)
+	# - Export variable
+	os.environ['PGPASSWORD'] = self.myPGPassword
+
+	# - Execute password
+	#try:
+        os.system(finalCommand)
+        #except Exception as err:
+        #    botLogger.exception("Error executing dump!")
+        
 # +-+-+-+-+-+-+-+-+-+-+ +-+-+-+-+-+
 # |D|E|P|L|O|Y|M|E|N|T| |L|O|G|I|C|
 # +-+-+-+-+-+-+-+-+-+-+ +-+-+-+-+-+
@@ -1730,6 +1762,9 @@ if len(os1.parametersList) != 1:
             elif os1.whichReport == 'SessionCleanUp':
                 # - Cleanup old sessions in RDS DB
                 myMaintenance.cleanUpSessions(db1,fhb1)
+	    elif os1.whichReport == 'DumpGeneration':
+		# - Generate report reservation dump
+		myMaintenance.reportReservationDump()
         else:
             # - Entering error in syntax
             FinalReport.dropTrashUsage()
