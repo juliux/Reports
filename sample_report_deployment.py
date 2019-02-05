@@ -684,7 +684,9 @@ class PartitionBox:
             tempMonthx = format( tempMonth, '02d')
             tempYear += 1                   
         else:
-            tempMonth += 01
+            tempMonth += 1
+	    tempMonthx = str(format( tempMonth, '02d'))
+	
         #self.inicio = str(tempYear) + '-' + str(tempMonth) + '-' + '01'
         self.inicio = str(tempYear) + '-' + tempMonthx + '-' + '01'
         self.data_rango = calendar.monthrange(tempYear, tempMonth)
@@ -695,7 +697,6 @@ class PartitionBox:
         #print( x )
         self.fin =  x + timedelta(days=1)
         self.fin = self.fin.strftime('%Y-%m-%d')
-        #print(self.fin)
 
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -778,7 +779,7 @@ class QueryBuilder:
                 firstOne = False
             else:
                 self.functionProcedureList.append('  ELSEIF ( NEW.end_date >= \'%s\' AND NEW.end_date < \'%s\' ) THEN INSERT INTO %s VALUES (NEW.*);\n' % ( inicio, fin, table ) )
-
+    
     def consolidateEODM(self,index):
         #for i in self.childTablesList:
         #    self.eodMaintenanceConsolidationList.append(i)
